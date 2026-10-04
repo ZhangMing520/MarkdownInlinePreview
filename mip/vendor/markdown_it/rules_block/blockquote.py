@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import logging
 
-from ..common.utils import isSpace
+from ..common.utils import isStrSpace
 from .state_block import StateBlock
 
 LOGGER = logging.getLogger(__name__)
 
 
-def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
+def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool:
     LOGGER.debug(
         "entering blockquote: %s, %s, %s, %s", state, startLine, endLine, silent
     )
@@ -18,12 +18,14 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
     pos = state.bMarks[startLine] + state.tShift[startLine]
     max = state.eMarks[startLine]
 
-    # if it's indented more than 3 spaces, it should be a code block
-    if (state.sCount[startLine] - state.blkIndent) >= 4:
+    if state.is_code_block(startLine):
         return False
 
     # check the block quote marker
-    if state.srcCharCode[pos] != 0x3E:  # /* > */
+    try:
+        if state.src[pos] != ">":
+            return False
+    except IndexError:
         return False
     pos += 1
 
@@ -36,12 +38,12 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
     initial = offset = state.sCount[startLine] + 1
 
     try:
-        second_char_code: int | None = state.srcCharCode[pos]
+        second_char: str | None = state.src[pos]
     except IndexError:
-        second_char_code = None
+        second_char = None
 
     # skip one optional space after '>'
-    if second_char_code == 0x20:  # /* space */
+    if second_char == " ":
         # ' >   test '
         #     ^ -- position start of line here:
         pos += 1
@@ -49,7 +51,7 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
         offset += 1
         adjustTab = False
         spaceAfterMarker = True
-    elif second_char_code == 0x09:  # /* tab */
+    elif second_char == "\t":
         spaceAfterMarker = True
 
         if (state.bsCount[startLine] + offset) % 4 == 3:
@@ -72,10 +74,10 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
     state.bMarks[startLine] = pos
 
     while pos < max:
-        ch = state.srcCharCode[pos]
+        ch = state.src[pos]
 
-        if isSpace(ch):
-            if ch == 0x09:  # / tab /
+        if isStrSpace(ch):
+            if ch == "\t":
                 offset += (
                     4
                     - (offset + state.bsCount[startLine] + (1 if adjustTab else 0)) % 4
@@ -145,7 +147,7 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
             # Case 1: line is not inside the blockquote, and this line is empty.
             break
 
-        evaluatesTrue = state.srcCharCode[pos] == 0x3E and not isOutdented  # /* > */
+        evaluatesTrue = state.src[pos] == ">" and not isOutdented
         pos += 1
         if evaluatesTrue:
             # This line is inside the blockquote.
@@ -154,12 +156,12 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
             initial = offset = state.sCount[nextLine] + 1
 
             try:
-                next_char: int | None = state.srcCharCode[pos]
+                next_char: str | None = state.src[pos]
             except IndexError:
                 next_char = None
 
             # skip one optional space after '>'
-            if next_char == 0x20:  # /* space */
+            if next_char == " ":
                 # ' >   test '
                 #     ^ -- position start of line here:
                 pos += 1
@@ -167,7 +169,7 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
                 offset += 1
                 adjustTab = False
                 spaceAfterMarker = True
-            elif next_char == 0x09:  # /* tab */
+            elif next_char == "\t":
                 spaceAfterMarker = True
 
                 if (state.bsCount[nextLine] + offset) % 4 == 3:
@@ -190,10 +192,10 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
             state.bMarks[nextLine] = pos
 
             while pos < max:
-                ch = state.srcCharCode[pos]
+                ch = state.src[pos]
 
-                if isSpace(ch):
-                    if ch == 0x09:
+                if isStrSpace(ch):
+                    if ch == "\t":
                         offset += (
                             4
                             - (
@@ -271,17 +273,58 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
     oldIndent = state.blkIndent
     state.blkIndent = 0
 
-    token = state.push("blockquote_open", "blockquote", 1)
-    token.markup = ">"
-    token.map = lines = [startLine, 0]
+    # Detect GitHub-style alert marker on the first content line.
+    # Note: `startLine` here refers to the first content line of the
+    # blockquote, after the `>` prefix has already been stripped by the
+    # blockquote parser above (bMarks/tShift adjusted to skip `> `).
+    alert_kind = None
+    if state.md.options.get("alerts", False) and nextLine > startLine:
+        alert_kind = _detect_alert(state, startLine)
 
-    state.md.block.tokenize(state, startLine, nextLine)
+    lines = [startLine, 0]
 
-    token = state.push("blockquote_close", "blockquote", -1)
-    token.markup = ">"
+    if alert_kind is not None:
+        # Emit alert tokens instead of blockquote tokens
+        alert_lower = alert_kind.lower()
+        token = state.push("alert_open", "div", 1)
+        token.markup = ">"
+        token.attrSet("class", f"markdown-alert markdown-alert-{alert_lower}")
+        token.map = lines
+        token.info = alert_kind
+        token.meta = {"kind": alert_kind}
+
+        # Emit a title paragraph: <p class="markdown-alert-title">Kind</p>
+        token = state.push("alert_title_open", "p", 1)
+        token.attrSet("class", "markdown-alert-title")
+        title_token = state.push("inline", "", 0)
+        title_token.content = alert_kind.capitalize()
+        title_token.children = []
+        token = state.push("alert_title_close", "p", -1)
+
+        # Skip the marker line (startLine) and tokenize from startLine + 1.
+        contentStart = startLine + 1
+        if contentStart < nextLine:
+            # tokenize() updates state.line to nextLine as part of its
+            # contract, consistent with the blockquote code path below.
+            state.md.block.tokenize(state, contentStart, nextLine)
+        else:
+            state.line = nextLine
+
+        token = state.push("alert_close", "div", -1)
+        token.markup = ">"
+    else:
+        token = state.push("blockquote_open", "blockquote", 1)
+        token.markup = ">"
+        token.map = lines
+
+        state.md.block.tokenize(state, startLine, nextLine)
+
+        token = state.push("blockquote_close", "blockquote", -1)
+        token.markup = ">"
 
     state.lineMax = oldLineMax
     state.parentType = oldParentType
+    # Update the opening token map for both alert and blockquote containers.
     lines[1] = state.line
 
     # Restore original tShift; this might not be necessary since the parser
@@ -295,3 +338,31 @@ def blockquote(state: StateBlock, startLine: int, endLine: int, silent: bool):
     state.blkIndent = oldIndent
 
     return True
+
+
+_ALERT_TYPES = {"NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"}
+
+
+def _detect_alert(state: StateBlock, startLine: int) -> str | None:
+    """Detect ``[!TYPE]`` on *startLine* (after ``>`` prefix has been stripped).
+
+    Returns the alert type string (e.g. ``"NOTE"``) or ``None``.
+    """
+    pos = state.bMarks[startLine] + state.tShift[startLine]
+    maximum = state.eMarks[startLine]
+    src = state.src
+
+    # Trim trailing whitespace
+    while maximum > pos and src[maximum - 1] in (" ", "\t"):
+        maximum -= 1
+
+    if maximum - pos < 4:
+        return None
+    if src[pos] != "[" or src[pos + 1] != "!":
+        return None
+    if src[maximum - 1] != "]":
+        return None
+    type_str = src[pos + 2 : maximum - 1].upper()
+    if type_str not in _ALERT_TYPES:
+        return None
+    return type_str

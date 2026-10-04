@@ -19,11 +19,12 @@ val <- bareval | quotedval
 bareval <- (ASCII_ALPHANUM | ':' | '_' | '-')+
 quotedval <- '"' ([^"] | '\"') '"'
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
 import re
-from typing import Callable
 
 
 class State(Enum):
@@ -46,14 +47,14 @@ REGEX_KEY_CHARACTERS = re.compile(r"[a-zA-Z\d_:-]")
 
 
 class TokenState:
-    def __init__(self):
-        self._tokens = []
+    def __init__(self) -> None:
+        self._tokens: list[tuple[int, int, str]] = []
         self.start: int = 0
 
     def set_start(self, start: int) -> None:
         self.start = start
 
-    def append(self, start: int, end: int, ttype: str):
+    def append(self, start: int, end: int, ttype: str) -> None:
         self._tokens.append((start, end, ttype))
 
     def compile(self, string: str) -> dict[str, str]:

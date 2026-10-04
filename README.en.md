@@ -70,8 +70,11 @@ one new file in `mip/engines/` + one registration line.
 
 - **python-markdown** (default): already available through Package Control's dependency
   channel — zero installation friction.
-- **markdown-it-py** (v0.2, vendored into the package): highest CommonMark fidelity,
-  GFM tables/task lists/strikethrough out of the box.
+- **markdown-it-py** (vendored into the package, 4.2.0): highest CommonMark fidelity,
+  GFM tables/task lists/strikethrough out of the box. Requires Sublime Text's
+  Python 3.10+ host (Build 4213+); on older builds (Python 3.8 host) this engine
+  is automatically unavailable and falls back to python-markdown, with a one-time
+  notice in the status bar.
 
 ## Feature comparison with VS Code preview
 

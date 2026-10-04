@@ -6,17 +6,15 @@ from ..common.utils import charCodeAt, unescapeAll
 
 
 class _Result:
-    __slots__ = ("ok", "pos", "lines", "str")
+    __slots__ = ("ok", "pos", "str")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.ok = False
         self.pos = 0
-        self.lines = 0
         self.str = ""
 
 
 def parseLinkDestination(string: str, pos: int, maximum: int) -> _Result:
-    lines = 0
     start = pos
     result = _Result()
 
@@ -49,7 +47,7 @@ def parseLinkDestination(string: str, pos: int, maximum: int) -> _Result:
     while pos < maximum:
         code = charCodeAt(string, pos)
 
-        if code == 0x20:
+        if code is None or code == 0x20:
             break
 
         # ascii control characters
@@ -80,7 +78,6 @@ def parseLinkDestination(string: str, pos: int, maximum: int) -> _Result:
         return result
 
     result.str = unescapeAll(string[start:pos])
-    result.lines = lines
     result.pos = pos
     result.ok = True
     return result

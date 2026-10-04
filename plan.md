@@ -155,11 +155,15 @@ MarkdownInlinePreview/
 ### v0.2 — 体验
 - [x] 编辑器→预览同步滚动（编辑器行 → 对应块的 host 行 `view.show()`，**块级近似对齐**，非像素级；不做反向）
 - [x] YAML front matter 渲染为表格
-- [x] markdown-it-py 引擎 + mdit-py-plugins（tables/tasklists/strikethrough，已 vendor 进 mip/vendor）
-      ⚠️ 版本组合钉死在 **markdown-it-py 2.2.0 + mdit-py-plugins 0.3.5**：3.8 宿主跑不了 4.x/0.6.x
-      （`collections.abc.MutableMapping[...]` 运行时下标是 3.9+ 语法）。表格/删除线由 2.2.0 的
-      `"default"` preset 提供（其生态 0.3.x 没有聚合 gfm 插件），任务列表单独装 tasklists。
-      将来切 ST 3.14 宿主（Build 4213+）时可升回 4.x + 0.6.x，各一行改动。
+- [x] markdown-it-py 引擎 + mdit-py-plugins（tables/tasklists/strikethrough，已 vendor 进 mip/vendor）。
+      v0.4 起 vendor 升级为 **markdown-it-py 4.2.0 + mdit-py-plugins 0.6.1 + mdurl 0.1.2**
+      （此前钉死 2.2.0/0.3.5 的原因是 3.8 宿主）。4.x/0.6.x 要求 Python 3.10+：3.8 宿主
+      实测抛 TypeError（`'ABCMeta' object is not subscriptable`，不是预想的 SyntaxError），
+      注册层懒加载/构造阶段统一捕获 ImportError/SyntaxError/TypeError，优雅回落
+      python-markdown 并在状态栏说明（消息与"未知引擎"区分）。表格/删除线经实测由 4.x
+      `"default"` preset 默认提供（preset 的 components 为空但规则构造期 enable），
+      不用 0.6 聚合 gfm 插件（捆绑脚注/alerts/裸链接 autolink，会改变输出）；
+      anchors 插件 0.6.1 仍在（默认只覆盖 h1/h2，与旧版逐字节一致）。
 - [x] 引擎降级与状态栏提示（缺库降级 + `sublime.status_message`）
 - [x] **浏览器实时预览**（`ctrl+alt+shift+m` / macOS `super+ctrl+shift+m`）：内置 127.0.0.1 HTTP
       服务器（`mip/browser_server.py`，纯 Python 可单测）+ SSE 推送 + EventSource 自动重连。
@@ -167,8 +171,12 @@ MarkdownInlinePreview/
       GitHub 风格 CSS 全内嵌（亮暗跟随系统）、pygments 高亮、离线零外部请求。
       这是"跳出 minihtml 限制"的正式通道：KaTeX/mermaid 已 vendor 进 mip/assets（`browser_extras`
       设置可关，npmmirror 下载，woff2 字体齐全，客户端 auto-render + mermaid.run 随 SSE 更新重跑）。
-- [x] 增量 phantom 更新：块数不变时只重插内容变化的块（差分对比，未变块原地保留消除闪烁）；
-      全篇 HTML 重渲染仍在主线程（引擎实例有状态，线程化有竞态风险，暂不做）
+- [x] 增量 phantom 更新：块数不变时只重插内容变化的块（差分对比，未变块原地保留消除闪烁）
+- [x] 渲染后台线程化（async_render.py）：取源文本/应用 phantom 留主线程，引擎转换 + 图片 IO
+      在单一 daemon 工作线程串行执行（引擎实例是进程级单例、vendor_loader 临时改 sys.path，
+      均不可并发；单线程既移出 UI 线程又天然消除竞态）。同预览排队任务 coalesce 只留最新，
+      回调经 set_timeout 回主线程并做代际/视图有效性校验丢弃过期结果；浏览器首帧渲染完成
+      后才打开浏览器，避免打开瞬间 404
 
 ### v0.3 — 发布件
 - [x] 路径补全（`on_query_completions`：`![](` / `[](` 触发文件路径补全）

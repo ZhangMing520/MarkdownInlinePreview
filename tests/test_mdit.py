@@ -1,8 +1,14 @@
-"""markdown-it-py 引擎测试（vendor 存在时才跑）。
+"""markdown-it-py 引擎测试（vendor 在当前 Python 宿主可加载时才跑）。
 
 证明 v0.2 的 GFM 闭环：markdown-it-py 真能产出 <table>/<input>/<del>，
 交给 render.py 转换层后变成 minihtml 可显示的 div 网格 / [x] / line-through。
+
+vendored 4.x 要求 Python 3.10+；旧宿主（如 ST 的 3.8）下导入会抛 SyntaxError
+或 TypeError（ABC 运行时下标），这些测试在该宿主整体 skip——降级路径本身由
+test_engines.py 单独钉死。
 """
+
+import sys
 
 try:
     import pytest
@@ -11,11 +17,12 @@ except ImportError:
 
 try:
     from mip.engines.mdit import MarkdownItEngine
-except ImportError:
+except (ImportError, SyntaxError, TypeError):
     MarkdownItEngine = None
 
 pytestmark = pytest.mark.skipif(
-    MarkdownItEngine is None, reason="markdown-it-py 未 vendor 进包"
+    MarkdownItEngine is None or sys.version_info < (3, 10),
+    reason="vendored markdown-it-py 4.x 需要 Python 3.10+",
 ) if pytest is not None else None
 
 

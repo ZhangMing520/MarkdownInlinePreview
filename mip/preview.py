@@ -11,6 +11,7 @@ import re
 import sublime
 import sublime_plugin
 
+from . import async_render
 from .engines import get_engine
 from . import settings as mip_settings
 from .render import DEFAULT_STYLE, render_html, split_blocks
@@ -74,6 +75,12 @@ def preview_title(source):
 
     name = source.file_name() or source.name()
     return "Preview " + (os.path.basename(name) if name else "未命名")
+
+
+def status_message(msg):
+    """统一状态栏前缀，内嵌/浏览器两种预览共用（避免前缀字面量在各处重复、str()/msg 漂移）。"""
+
+    sublime.status_message("MarkdownInlinePreview: " + str(msg))
 
 
 def schedule_debounced(holder, delay_ms, render):
@@ -228,6 +235,8 @@ class PreviewManager:
         self._anchors = {}
         # 防抖代际（schedule_debounced 用）
         self._gen = 0
+        # 后台渲染代际：每次投递 +1，过期结果回主线程时比对丢弃
+        self._render_gen = 0
         # sync_scroll 挂在每次光标移动上，持续性失败只记一次完整 traceback
         self._scroll_failed_logged = False
         # 坐标不可用退回比例映射是异常信号（phantom 全挂点 0 即此形态），只告警一次
@@ -279,19 +288,38 @@ class PreviewManager:
         if not self.is_open() or self.source is None or not self.source.is_valid():
             return
         cfg = mip_settings.get_settings()
-        engine, msg = get_engine(cfg.get("engine", "python-markdown"))
-        if msg:
-            sublime.status_message("MarkdownInlinePreview: " + msg)
-        if engine is None:
-            return
+        # ST API 调用留在主线程：取源文本（view.substr 只能主线程），之后整段渲染
+        # （引擎转换 + 图片 base64 文件 IO + minihtml 适配）移到后台单线程，不卡输入
         text, base_dir = read_source(self.source)
-        try:
-            html = render_html(text, cfg, engine, base_dir=base_dir)
-        except Exception:
+        self._render_gen += 1
+        gen = self._render_gen
+        engine_name = cfg["engine"]
+
+        def _job():
+            # 引擎单例首次构建（import/vendor 解压）也在后台完成，属一次性开销
+            engine, msg = get_engine(engine_name)
+            if engine is None:
+                return None, msg
+            return render_html(text, cfg, engine, base_dir=base_dir), msg
+
+        def _ok(payload):
+            if gen != self._render_gen or not self.is_open():
+                return  # 更新的渲染已投递，或预览在渲染期间被关闭
+            html, msg = payload
+            if html is None:
+                status_message(msg)
+                return
+            if msg:
+                status_message(msg)
+            self._update_phantoms(split_blocks(html))
+
+        def _fail(exc):
+            if gen != self._render_gen or not self.is_open():
+                return
             logger.exception("MarkdownInlinePreview: 渲染失败，预览保持旧内容")
-            sublime.status_message("MarkdownInlinePreview: 渲染失败，详见控制台")
-            return
-        self._update_phantoms(split_blocks(html))
+            status_message("渲染失败，详见控制台")
+
+        async_render.submit(self, _job, _ok, _fail)
 
     def _update_phantoms(self, blocks):
         view = self.view

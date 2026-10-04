@@ -57,7 +57,9 @@
 引擎统一接口 `render(text, settings) -> html`，新增引擎 = `mip/engines/` 下加一个文件 + 注册一行。
 
 - **python-markdown**（默认）：PC 依赖频道现成，零安装摩擦。
-- **markdown-it-py**（v0.2，已 vendor 进包）：CommonMark 精准度最高，GFM 表格/任务列表/删除线开箱。
+- **markdown-it-py**（已 vendor 进包，4.2.0）：CommonMark 精准度最高，GFM 表格/任务列表/删除线开箱。
+  需要 Sublime Text 的 Python 3.10+ 宿主（Build 4213+；4215 真机为 3.14）；旧构建（3.8 宿主）
+  下该引擎自动不可用并回落 python-markdown，状态栏会提示一次。
 
 ## 与 VS Code 预览的能力对照
 

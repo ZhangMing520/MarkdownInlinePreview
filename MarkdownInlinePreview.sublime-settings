@@ -1,5 +1,5 @@
 {
-    // 渲染引擎："python-markdown"（默认）| "markdown-it-py"（v0.2 起可选）
+    // 渲染引擎："python-markdown"（默认）| "markdown-it-py"（需 Build 4213+ 的 3.10+ Python 宿主；旧构建不可用并自动回落）
     "engine": "python-markdown",
 
     // 传给 python-markdown 的扩展开关

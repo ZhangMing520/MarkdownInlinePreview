@@ -1,7 +1,7 @@
 # Lists
 import logging
 
-from ..common.utils import isSpace
+from ..common.utils import isStrSpace
 from .state_block import StateBlock
 
 LOGGER = logging.getLogger(__name__)
@@ -9,20 +9,23 @@ LOGGER = logging.getLogger(__name__)
 
 # Search `[-+*][\n ]`, returns next pos after marker on success
 # or -1 on fail.
-def skipBulletListMarker(state: StateBlock, startLine: int):
+def skipBulletListMarker(state: StateBlock, startLine: int) -> int:
     pos = state.bMarks[startLine] + state.tShift[startLine]
     maximum = state.eMarks[startLine]
 
-    marker = state.srcCharCode[pos]
+    try:
+        marker = state.src[pos]
+    except IndexError:
+        return -1
     pos += 1
-    # Check bullet /* * */ /* - */ /* + */
-    if marker != 0x2A and marker != 0x2D and marker != 0x2B:
+
+    if marker not in ("*", "-", "+"):
         return -1
 
     if pos < maximum:
-        ch = state.srcCharCode[pos]
+        ch = state.src[pos]
 
-        if not isSpace(ch):
+        if not isStrSpace(ch):
             # " -test " - is not a list item
             return -1
 
@@ -31,7 +34,7 @@ def skipBulletListMarker(state: StateBlock, startLine: int):
 
 # Search `\d+[.)][\n ]`, returns next pos after marker on success
 # or -1 on fail.
-def skipOrderedListMarker(state: StateBlock, startLine: int):
+def skipOrderedListMarker(state: StateBlock, startLine: int) -> int:
     start = state.bMarks[startLine] + state.tShift[startLine]
     pos = start
     maximum = state.eMarks[startLine]
@@ -40,11 +43,12 @@ def skipOrderedListMarker(state: StateBlock, startLine: int):
     if pos + 1 >= maximum:
         return -1
 
-    ch = state.srcCharCode[pos]
+    ch = state.src[pos]
     pos += 1
 
+    ch_ord = ord(ch)
     # /* 0 */  /* 9 */
-    if ch < 0x30 or ch > 0x39:
+    if ch_ord < 0x30 or ch_ord > 0x39:
         return -1
 
     while True:
@@ -52,11 +56,12 @@ def skipOrderedListMarker(state: StateBlock, startLine: int):
         if pos >= maximum:
             return -1
 
-        ch = state.srcCharCode[pos]
+        ch = state.src[pos]
         pos += 1
 
         # /* 0 */  /* 9 */
-        if ch >= 0x30 and ch <= 0x39:
+        ch_ord = ord(ch)
+        if ch_ord >= 0x30 and ch_ord <= 0x39:
             # List marker should have no more than 9 digits
             # (prevents integer overflow in browsers)
             if pos - start >= 10:
@@ -64,23 +69,23 @@ def skipOrderedListMarker(state: StateBlock, startLine: int):
 
             continue
 
-        # found valid marker: /* ) */ /* . */
-        if ch == 0x29 or ch == 0x2E:
+        # found valid marker
+        if ch in (")", "."):
             break
 
         return -1
 
     if pos < maximum:
-        ch = state.srcCharCode[pos]
+        ch = state.src[pos]
 
-        if not isSpace(ch):
+        if not isStrSpace(ch):
             # " 1.test " - is not a list item
             return -1
 
     return pos
 
 
-def markTightParagraphs(state: StateBlock, idx: int):
+def markTightParagraphs(state: StateBlock, idx: int) -> None:
     level = state.level + 2
 
     i = idx + 2
@@ -93,14 +98,13 @@ def markTightParagraphs(state: StateBlock, idx: int):
         i += 1
 
 
-def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
+def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool:
     LOGGER.debug("entering list: %s, %s, %s, %s", state, startLine, endLine, silent)
 
     isTerminatingParagraph = False
     tight = True
 
-    # if it's indented more than 3 spaces, it should be a code block
-    if state.sCount[startLine] - state.blkIndent >= 4:
+    if state.is_code_block(startLine):
         return False
 
     # Special case:
@@ -118,14 +122,17 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
 
     # limit conditions when list can interrupt
     # a paragraph (validation mode only)
-    if silent and state.parentType == "paragraph":
-        # Next list item should still terminate previous list item
-        #
-        # This code can fail if plugins use blkIndent as well as lists,
-        # but I hope the spec gets fixed long before that happens.
-        #
-        if state.tShift[startLine] >= state.blkIndent:
-            isTerminatingParagraph = True
+    # Next list item should still terminate previous list item
+    #
+    # This code can fail if plugins use blkIndent as well as lists,
+    # but I hope the spec gets fixed long before that happens.
+    #
+    if (
+        silent
+        and state.parentType == "paragraph"
+        and state.sCount[startLine] >= state.blkIndent
+    ):
+        isTerminatingParagraph = True
 
     # Detect list type and position after marker
     posAfterMarker = skipOrderedListMarker(state, startLine)
@@ -147,12 +154,14 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
 
     # If we're starting a new unordered list right after
     # a paragraph, first line should not be empty.
-    if isTerminatingParagraph:
-        if state.skipSpaces(posAfterMarker) >= state.eMarks[startLine]:
-            return False
+    if (
+        isTerminatingParagraph
+        and state.skipSpaces(posAfterMarker) >= state.eMarks[startLine]
+    ):
+        return False
 
     # We should terminate list on style change. Remember first one to compare.
-    markerCharCode = state.srcCharCode[posAfterMarker - 1]
+    markerChar = state.src[posAfterMarker - 1]
 
     # For validation mode we can terminate immediately
     if silent:
@@ -170,7 +179,7 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
         token = state.push("bullet_list_open", "ul", 1)
 
     token.map = listLines = [startLine, 0]
-    token.markup = chr(markerCharCode)
+    token.markup = markerChar
 
     #
     # Iterate list items
@@ -194,11 +203,11 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
         )
 
         while pos < maximum:
-            ch = state.srcCharCode[pos]
+            ch = state.src[pos]
 
-            if ch == 0x09:  # \t
+            if ch == "\t":
                 offset += 4 - (offset + state.bsCount[nextLine]) % 4
-            elif ch == 0x20:  # \s
+            elif ch == " ":
                 offset += 1
             else:
                 break
@@ -207,11 +216,8 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
 
         contentStart = pos
 
-        if contentStart >= maximum:
-            # trimming space in "-    \n  3" case, indent is 1 here
-            indentAfterMarker = 1
-        else:
-            indentAfterMarker = offset - initial
+        # trimming space in "-    \n  3" case, indent is 1 here
+        indentAfterMarker = 1 if contentStart >= maximum else offset - initial
 
         # If we have more than 4 spaces, the indent is 1
         # (the rest is just indented code block)
@@ -224,13 +230,25 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
 
         # Run subparser & write tokens
         token = state.push("list_item_open", "li", 1)
-        token.markup = chr(markerCharCode)
+        token.markup = markerChar
         token.map = itemLines = [startLine, 0]
         if isOrdered:
             token.info = state.src[start : posAfterMarker - 1]
 
+        # Detect GFM task checkbox: `[ ] ` or `[x] `/`[X] ` at content start
+        checkboxLen = 0
+        if state.md.options.get("tasklists", False) and contentStart < maximum:
+            checked = _detect_task_checkbox(state.src, contentStart, maximum)
+            if checked is not None:
+                token.meta = {"checked": checked}
+                # Advance content past the checkbox: `[x]` (3 chars) + whitespace.
+                # `_detect_task_checkbox` already guarantees a whitespace char at
+                # pos+3, so we always consume 4 characters.
+                checkboxLen = 4
+
         # change current state, then restore it after parser subcall
         oldTight = state.tight
+        oldBMark = state.bMarks[startLine]
         oldTShift = state.tShift[startLine]
         oldSCount = state.sCount[startLine]
 
@@ -245,6 +263,12 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
         state.tight = True
         state.tShift[startLine] = contentStart - state.bMarks[startLine]
         state.sCount[startLine] = offset
+
+        # If we detected a checkbox, advance bMarks past it so that
+        # getLines() doesn't include the checkbox text in the content.
+        if checkboxLen:
+            state.bMarks[startLine] = contentStart + checkboxLen
+            state.tShift[startLine] = 0
 
         if contentStart >= maximum and state.isEmpty(startLine + 1):
             # workaround for this case
@@ -271,12 +295,14 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
 
         state.blkIndent = state.listIndent
         state.listIndent = oldListIndent
+        if checkboxLen:
+            state.bMarks[startLine] = oldBMark
         state.tShift[startLine] = oldTShift
         state.sCount[startLine] = oldSCount
         state.tight = oldTight
 
         token = state.push("list_item_close", "li", -1)
-        token.markup = chr(markerCharCode)
+        token.markup = markerChar
 
         nextLine = startLine = state.line
         itemLines[1] = nextLine
@@ -292,8 +318,7 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
         if state.sCount[nextLine] < state.blkIndent:
             break
 
-        # if it's indented more than 3 spaces, it should be a code block
-        if state.sCount[startLine] - state.blkIndent >= 4:
+        if state.is_code_block(startLine):
             break
 
         # fail if terminating block found
@@ -317,16 +342,34 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
             if posAfterMarker < 0:
                 break
 
-        if markerCharCode != state.srcCharCode[posAfterMarker - 1]:
+        if markerChar != state.src[posAfterMarker - 1]:
             break
 
     # Finalize list
+
+    # If any direct list item has a task checkbox, add class to the list
+    if state.md.options.get("tasklists", False):
+        containsTask = False
+        level = state.tokens[listTokIdx].level
+        for j in range(listTokIdx + 1, len(state.tokens)):
+            tok = state.tokens[j]
+            if (
+                tok.level == level + 1
+                and tok.type == "list_item_open"
+                and tok.meta
+                and "checked" in tok.meta
+            ):
+                tok.attrJoin("class", "task-list-item")
+                containsTask = True
+        if containsTask:
+            state.tokens[listTokIdx].attrJoin("class", "contains-task-list")
+
     if isOrdered:
         token = state.push("ordered_list_close", "ol", -1)
     else:
         token = state.push("bullet_list_close", "ul", -1)
 
-    token.markup = chr(markerCharCode)
+    token.markup = markerChar
 
     listLines[1] = nextLine
     state.line = nextLine
@@ -338,3 +381,28 @@ def list_block(state: StateBlock, startLine: int, endLine: int, silent: bool):
         markTightParagraphs(state, listTokIdx)
 
     return True
+
+
+def _detect_task_checkbox(src: str, pos: int, maximum: int) -> bool | None:
+    """Detect ``[ ]``, ``[x]``, or ``[X]`` at *pos*, followed by whitespace.
+
+    Returns ``True`` (checked), ``False`` (unchecked), or ``None`` (no match).
+    """
+    # Need at least 4 chars: `[`, char, `]`, whitespace
+    if pos + 4 > maximum:
+        return None
+    if src[pos] != "[":
+        return None
+    inner = src[pos + 1]
+    if src[pos + 2] != "]":
+        return None
+    if inner == " ":
+        checked = False
+    elif inner in ("x", "X"):
+        checked = True
+    else:
+        return None
+    # After `]`, must have whitespace
+    if src[pos + 3] not in (" ", "\t"):
+        return None
+    return checked

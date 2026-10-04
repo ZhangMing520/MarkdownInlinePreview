@@ -1,6 +1,21 @@
 # Changelog
 
 ## Unreleased
+- **markdown-it-py 引擎升级回 4.x**：vendored 副本 markdown-it-py 2.2.0 → **4.2.0**、
+  mdit-py-plugins 0.3.5 → **0.6.1**、mdurl → **0.1.2**（早期为兼容 ST 旧 3.8 宿主降到 2.2.0）。
+  4.x 要求 Python 3.10+，Build 4213+ 的 3.14 宿主现在吃到上游两年修复；旧构建（3.8 宿主）
+  实测导入期抛 TypeError（`'ABCMeta' object is not subscriptable`，非 SyntaxError），
+  注册层懒加载/构造阶段统一捕获 ImportError/SyntaxError/TypeError 并优雅回落
+  python-markdown，状态栏给出明确提示（与"未知引擎"区分）。常用语法（表格/任务列表/
+  删除线/标题锚点/原始 HTML）输出与 2.2.0 实测逐字节一致；0.6 新增的聚合 gfm 插件
+  捆绑脚注/alerts/裸链接 autolink 会改变输出，不采用。
+- **渲染管线后台线程化**：整篇 Markdown → HTML（引擎转换 + 本地图片 base64 文件 IO）
+  从主线程移到单一 daemon 工作线程（mip/async_render.py），大文档连续打字不再卡输入。
+  取源文本（view.substr）与 phantom 更新仍在主线程；单工作线程串行——引擎实例是进程级
+  单例、vendor_loader 临时改 sys.path 均不可并发，串行天然消除竞态。过期结果两层防护：
+  同一预览排队中的旧任务直接被新任务覆盖丢弃；在途任务无法取消，回调回主线程后按代际+
+  视图有效性作废。浏览器预览改为首帧渲染写入服务器后再打开浏览器（此前异步化后打开瞬间
+  可能 404）；插件卸载投毒丸停线程，排队任务丢弃。
 - **内嵌预览支持多文件多标签**：原"一窗口一个预览、切文件复用同一视图"改为按源视图隔离
   （注册表 `window_id → {source_view_id: manager}`，与浏览器模式对齐）。对多个文件分别
   `ctrl+alt+m`，右栏各开一个 `Preview <文件名>` 标签页，互不覆盖；布局状态机上移到窗口级

@@ -9,10 +9,11 @@ import logging
 import threading
 import webbrowser
 
-import sublime
 import sublime_plugin
 
+from . import async_render
 from .browser_server import LiveServer
+from .engines import get_engine
 from .render import render_body
 from . import preview as preview_mod
 from . import settings as mip_settings
@@ -84,6 +85,12 @@ class BrowserManager:
         self.doc_id = "v%d" % source.id()
         # 防抖代际（preview.schedule_debounced 用）
         self._gen = 0
+        # 后台渲染代际：每次投递 +1，过期结果回主线程时比对丢弃
+        self._render_gen = 0
+        # 浏览器打开意图标志：首帧真正写入服务器后由 _ok 兑现。刻意不挂在某个具体
+        # 渲染任务的回调上——后台队列会把同 owner 的排队任务 coalesce 只留最新，
+        # 绑在建任务上的回调可能被后继渲染覆盖丢失，导致浏览器永远打不开。
+        self._open_pending = False
         # sync_scroll 挂在每次光标移动上，持续性失败只记一次完整 traceback
         self._scroll_failed_logged = False
 
@@ -91,14 +98,20 @@ class BrowserManager:
         return view is not None and self.source is not None and self.source.id() == view.id()
 
     def start(self):
-        """渲染当前内容并在系统浏览器打开（manager 已注册后再调用）。"""
+        """渲染当前内容并在系统浏览器打开（manager 已注册后再调用）。
 
+        打开意图经 _open_pending 承载，首帧真正写入服务器后才兑现（见 __init__）。"""
+
+        self._open_pending = True
         self.render()
+
+    def _open_browser(self):
         url = get_server().base_url + "/" + self.doc_id
         webbrowser.open(url)
-        sublime.status_message("MarkdownInlinePreview: 浏览器实时预览 " + url)
+        preview_mod.status_message("浏览器实时预览 " + url)
 
     def stop(self):
+        # 置空 source 即作废在途/待起回调（_ok/_fail 首行都校验 self.source），无需再动 _render_gen
         self.source = None
         # 服务器可能已被 shutdown（插件卸载），不要再把它拉起来
         with _SERVER_LOCK:
@@ -110,23 +123,47 @@ class BrowserManager:
         preview_mod.schedule_debounced(self, delay, self.render)
 
     def render(self):
-        from .engines import get_engine
+        """渲染当前源文本并推送给浏览器页面。后台线程执行渲染，回主线程写页面。"""
 
         if self.source is None or not self.source.is_valid():
             return
         cfg = mip_settings.get_settings()
-        engine, msg = get_engine(cfg.get("engine", "python-markdown"))
-        if engine is None:
-            sublime.status_message("MarkdownInlinePreview: " + str(msg))
-            return
         text, base_dir = preview_mod.read_source(self.source)
-        try:
-            body = render_body(text, cfg, engine, base_dir=base_dir)
-        except Exception:
+        self._render_gen += 1
+        gen = self._render_gen
+        engine_name = cfg["engine"]
+
+        def _job():
+            engine, msg = get_engine(engine_name)
+            if engine is None:
+                return None, msg
+            return render_body(text, cfg, engine, base_dir=base_dir), msg
+
+        def _ok(payload):
+            if gen != self._render_gen or self.source is None or not self.source.is_valid():
+                return  # 更新的渲染已投递，或预览在渲染期间被停止/源视图已关
+            body, msg = payload
+            if body is None:
+                self._open_pending = False  # 引擎不可用，取消待打开避免误开空白页
+                preview_mod.status_message(msg)
+                return
+            if msg:
+                preview_mod.status_message(msg)
+            title = preview_mod.preview_title(self.source)
+            get_server().set_page(
+                self.doc_id, body, extras=cfg.get("browser_extras", True), title=title)
+            if self._open_pending:
+                self._open_pending = False
+                self._open_browser()
+
+        def _fail(exc):
+            if gen != self._render_gen or self.source is None:
+                return
+            self._open_pending = False  # 渲染异常，取消待打开并给反馈，不让命令静默
             logger.exception("MarkdownInlinePreview: 浏览器预览渲染失败，保持旧页面")
-            return
-        title = preview_mod.preview_title(self.source)
-        get_server().set_page(self.doc_id, body, extras=cfg.get("browser_extras", True), title=title)
+            preview_mod.status_message("浏览器预览渲染失败，详见控制台")
+
+        async_render.submit(self, _job, _ok, _fail)
 
     def sync_scroll(self, source):
         """编辑器光标 → 浏览器按整页比例滚动（与 preview.py 同级的近似对齐）。
