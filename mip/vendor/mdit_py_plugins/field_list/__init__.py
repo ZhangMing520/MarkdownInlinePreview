@@ -1,15 +1,12 @@
 """Field list plugin"""
-
-from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Optional, Tuple
 
 from markdown_it import MarkdownIt
 from markdown_it.rules_block import StateBlock
 
-from mdit_py_plugins.utils import is_code_block
 
-
-def fieldlist_plugin(md: MarkdownIt) -> None:
+def fieldlist_plugin(md: MarkdownIt):
     """Field lists are mappings from field names to field bodies, based on the
     `reStructureText syntax
     <https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#field-lists>`_.
@@ -45,7 +42,7 @@ def fieldlist_plugin(md: MarkdownIt) -> None:
     )
 
 
-def parseNameMarker(state: StateBlock, startLine: int) -> tuple[int, str]:
+def parseNameMarker(state: StateBlock, startLine: int) -> Tuple[int, str]:
     """Parse field name: `:name:`
 
     :returns: position after name marker, name text
@@ -88,7 +85,7 @@ def parseNameMarker(state: StateBlock, startLine: int) -> tuple[int, str]:
 
 
 @contextmanager
-def set_parent_type(state: StateBlock, name: str) -> Iterator[None]:
+def set_parent_type(state: StateBlock, name: str):
     """Temporarily set parent type to `name`"""
     oldParentType = state.parentType
     state.parentType = name
@@ -96,12 +93,11 @@ def set_parent_type(state: StateBlock, name: str) -> Iterator[None]:
     state.parentType = oldParentType
 
 
-def _fieldlist_rule(
-    state: StateBlock, startLine: int, endLine: int, silent: bool
-) -> bool:
+def _fieldlist_rule(state: StateBlock, startLine: int, endLine: int, silent: bool):
     # adapted from markdown_it/rules_block/list.py::list_block
 
-    if is_code_block(state, startLine):
+    # if it's indented more than 3 spaces, it should be a code block
+    if state.sCount[startLine] - state.blkIndent >= 4:
         return False
 
     posAfterName, name_text = parseNameMarker(state, startLine)
@@ -142,13 +138,13 @@ def _fieldlist_rule(
 
             # find indent to start of body on first line
             while pos < maximum:
-                ch = state.src[pos]
+                ch = state.srcCharCode[pos]
 
-                if ch == "\t":
+                if ch == 0x09:  # \t
                     first_line_body_indent += (
                         4 - (first_line_body_indent + state.bsCount[nextLine]) % 4
                     )
-                elif ch == " ":
+                elif ch == 0x20:  # \s
                     first_line_body_indent += 1
                 else:
                     break
@@ -159,14 +155,13 @@ def _fieldlist_rule(
 
             # to figure out the indent of the body,
             # we look at all non-empty, indented lines and find the minimum indent
-            block_indent: int | None = None
+            block_indent: Optional[int] = None
             _line = startLine + 1
             while _line < endLine:
                 # if start_of_content < end_of_content, then non-empty line
                 if (state.bMarks[_line] + state.tShift[_line]) < state.eMarks[_line]:
-                    if state.tShift[_line] <= state.blkIndent:
-                        # the line is not indented relative to the field marker,
-                        # so it's the end of the field body
+                    if state.tShift[_line] <= 0:
+                        # the line has no indent, so it's the end of the field
                         break
                     block_indent = (
                         state.tShift[_line]
@@ -178,7 +173,7 @@ def _fieldlist_rule(
 
             has_first_line = contentStart < maximum
             if block_indent is None:  # no body content
-                if not has_first_line:  # noqa: SIM108
+                if not has_first_line:  # noqa SIM108
                     # no body or first line, so just use default
                     block_indent = 2
                 else:
@@ -200,10 +195,15 @@ def _fieldlist_rule(
                     # and replace the "hole" left with space,
                     # so that src indexes still match
                     diff = first_line_body_indent - block_indent
-                    state.src = (
+                    state._src = (
                         state.src[: contentStart - diff]
                         + " " * diff
                         + state.src[contentStart:]
+                    )
+                    state.srcCharCode = (
+                        state.srcCharCode[: contentStart - diff]
+                        + tuple([0x20] * diff)
+                        + state.srcCharCode[contentStart:]
                     )
 
                 state.tShift[startLine] = contentStart - diff - state.bMarks[startLine]
@@ -226,7 +226,8 @@ def _fieldlist_rule(
             if state.sCount[nextLine] < state.blkIndent:
                 break
 
-            if is_code_block(state, startLine):
+            # if it's indented more than 3 spaces, it should be a code block
+            if state.sCount[startLine] - state.blkIndent >= 4:
                 break
 
             # get next field item
@@ -243,14 +244,16 @@ def _fieldlist_rule(
 
 
 @contextmanager
-def temp_state_changes(state: StateBlock, startLine: int) -> Iterator[None]:
+def temp_state_changes(state: StateBlock, startLine: int):
     """Allow temporarily changing certain state attributes."""
     oldTShift = state.tShift[startLine]
     oldSCount = state.sCount[startLine]
     oldBlkIndent = state.blkIndent
-    oldSrc = state.src
+    oldSrc = state._src
+    oldSrcCharCode = state.srcCharCode
     yield
     state.blkIndent = oldBlkIndent
     state.tShift[startLine] = oldTShift
     state.sCount[startLine] = oldSCount
-    state.src = oldSrc
+    state._src = oldSrc
+    state.srcCharCode = oldSrcCharCode

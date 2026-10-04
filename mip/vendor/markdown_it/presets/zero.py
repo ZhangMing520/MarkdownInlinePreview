@@ -3,10 +3,8 @@
 modes. For example, to parse bold/italic only.
 """
 
-from ..utils import PresetType
 
-
-def make() -> PresetType:
+def make():
     return {
         "options": {
             "maxNesting": 20,  # Internal protection, recursion limit
@@ -34,11 +32,8 @@ def make() -> PresetType:
             "highlight": None,
         },
         "components": {
-            "core": {"rules": ["normalize", "block", "inline", "text_join"]},
+            "core": {"rules": ["normalize", "block", "inline"]},
             "block": {"rules": ["paragraph"]},
-            "inline": {
-                "rules": ["text"],
-                "rules2": ["balance_pairs", "fragments_join"],
-            },
+            "inline": {"rules": ["text"], "rules2": ["balance_pairs", "text_collapse"]},
         },
     }

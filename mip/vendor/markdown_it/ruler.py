@@ -15,22 +15,22 @@ You will not need use this class directly until write plugins. For simple
 rules control use [[MarkdownIt.disable]], [[MarkdownIt.enable]] and
 [[MarkdownIt.use]].
 """
-
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, MutableMapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Generic, TypedDict, TypeVar
-import warnings
+from typing import TYPE_CHECKING
 
-from .utils import EnvType
+from markdown_it._compat import DATACLASS_KWARGS
 
 if TYPE_CHECKING:
     from markdown_it import MarkdownIt
 
 
 class StateBase:
-    def __init__(self, src: str, md: MarkdownIt, env: EnvType):
+    srcCharCode: tuple[int, ...]
+
+    def __init__(self, src: str, md: MarkdownIt, env: MutableMapping):
         self.src = src
         self.env = env
         self.md = md
@@ -42,44 +42,32 @@ class StateBase:
     @src.setter
     def src(self, value: str) -> None:
         self._src = value
-        self._srcCharCode: tuple[int, ...] | None = None
-
-    @property
-    def srcCharCode(self) -> tuple[int, ...]:
-        warnings.warn(
-            "StateBase.srcCharCode is deprecated. Use StateBase.src instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if self._srcCharCode is None:
-            self._srcCharCode = tuple(ord(c) for c in self._src)
-        return self._srcCharCode
+        self.srcCharCode = tuple(ord(c) for c in self.src)
 
 
-class RuleOptionsType(TypedDict, total=False):
-    alt: list[str]
+# The first positional arg is always a subtype of `StateBase`. Other
+# arguments may or may not exist, based on the rule's type (block,
+# core, inline). Return type is either `None` or `bool` based on the
+# rule's type.
+RuleFunc = Callable
 
 
-RuleFuncTv = TypeVar("RuleFuncTv")
-"""A rule function, whose signature is dependent on the state type."""
-
-
-@dataclass(slots=True)
-class Rule(Generic[RuleFuncTv]):
+@dataclass(**DATACLASS_KWARGS)
+class Rule:
     name: str
     enabled: bool
-    fn: RuleFuncTv = field(repr=False)
+    fn: RuleFunc = field(repr=False)
     alt: list[str]
 
 
-class Ruler(Generic[RuleFuncTv]):
-    def __init__(self) -> None:
+class Ruler:
+    def __init__(self):
         # List of added rules.
-        self.__rules__: list[Rule[RuleFuncTv]] = []
+        self.__rules__: list[Rule] = []
         # Cached rule chains.
         # First level - chain name, '' for default.
         # Second level - diginal anchor for fast filtering by charcodes.
-        self.__cache__: dict[str, list[RuleFuncTv]] | None = None
+        self.__cache__: dict[str, list[RuleFunc]] | None = None
 
     def __find__(self, name: str) -> int:
         """Find rule index by name"""
@@ -107,9 +95,7 @@ class Ruler(Generic[RuleFuncTv]):
                     continue
                 self.__cache__[chain].append(rule.fn)
 
-    def at(
-        self, ruleName: str, fn: RuleFuncTv, options: RuleOptionsType | None = None
-    ) -> None:
+    def at(self, ruleName: str, fn: RuleFunc, options=None):
         """Replace rule by name with new function & options.
 
         :param ruleName: rule name to replace.
@@ -125,13 +111,7 @@ class Ruler(Generic[RuleFuncTv]):
         self.__rules__[index].alt = options.get("alt", [])
         self.__cache__ = None
 
-    def before(
-        self,
-        beforeName: str,
-        ruleName: str,
-        fn: RuleFuncTv,
-        options: RuleOptionsType | None = None,
-    ) -> None:
+    def before(self, beforeName: str, ruleName: str, fn: RuleFunc, options=None):
         """Add new rule to chain before one with given name.
 
         :param beforeName: new rule will be added before this one.
@@ -144,18 +124,10 @@ class Ruler(Generic[RuleFuncTv]):
         options = options or {}
         if index == -1:
             raise KeyError(f"Parser rule not found: {beforeName}")
-        self.__rules__.insert(
-            index, Rule[RuleFuncTv](ruleName, True, fn, options.get("alt", []))
-        )
+        self.__rules__.insert(index, Rule(ruleName, True, fn, options.get("alt", [])))
         self.__cache__ = None
 
-    def after(
-        self,
-        afterName: str,
-        ruleName: str,
-        fn: RuleFuncTv,
-        options: RuleOptionsType | None = None,
-    ) -> None:
+    def after(self, afterName: str, ruleName: str, fn: RuleFunc, options=None):
         """Add new rule to chain after one with given name.
 
         :param afterName: new rule will be added after this one.
@@ -169,13 +141,11 @@ class Ruler(Generic[RuleFuncTv]):
         if index == -1:
             raise KeyError(f"Parser rule not found: {afterName}")
         self.__rules__.insert(
-            index + 1, Rule[RuleFuncTv](ruleName, True, fn, options.get("alt", []))
+            index + 1, Rule(ruleName, True, fn, options.get("alt", []))
         )
         self.__cache__ = None
 
-    def push(
-        self, ruleName: str, fn: RuleFuncTv, options: RuleOptionsType | None = None
-    ) -> None:
+    def push(self, ruleName: str, fn: RuleFunc, options=None):
         """Push new rule to the end of chain.
 
         :param ruleName: new rule will be added to the end of chain.
@@ -183,14 +153,10 @@ class Ruler(Generic[RuleFuncTv]):
         :param options: new rule options (not mandatory).
 
         """
-        self.__rules__.append(
-            Rule[RuleFuncTv](ruleName, True, fn, (options or {}).get("alt", []))
-        )
+        self.__rules__.append(Rule(ruleName, True, fn, (options or {}).get("alt", [])))
         self.__cache__ = None
 
-    def enable(
-        self, names: str | Iterable[str], ignoreInvalid: bool = False
-    ) -> list[str]:
+    def enable(self, names: str | Iterable[str], ignoreInvalid: bool = False):
         """Enable rules with given names.
 
         :param names: name or list of rule names to enable.
@@ -200,7 +166,7 @@ class Ruler(Generic[RuleFuncTv]):
         """
         if isinstance(names, str):
             names = [names]
-        result: list[str] = []
+        result = []
         for name in names:
             idx = self.__find__(name)
             if (idx < 0) and ignoreInvalid:
@@ -212,9 +178,7 @@ class Ruler(Generic[RuleFuncTv]):
         self.__cache__ = None
         return result
 
-    def enableOnly(
-        self, names: str | Iterable[str], ignoreInvalid: bool = False
-    ) -> list[str]:
+    def enableOnly(self, names: str | Iterable[str], ignoreInvalid: bool = False):
         """Enable rules with given names, and disable everything else.
 
         :param names: name or list of rule names to enable.
@@ -226,11 +190,9 @@ class Ruler(Generic[RuleFuncTv]):
             names = [names]
         for rule in self.__rules__:
             rule.enabled = False
-        return self.enable(names, ignoreInvalid)
+        self.enable(names, ignoreInvalid)
 
-    def disable(
-        self, names: str | Iterable[str], ignoreInvalid: bool = False
-    ) -> list[str]:
+    def disable(self, names: str | Iterable[str], ignoreInvalid: bool = False):
         """Disable rules with given names.
 
         :param names: name or list of rule names to enable.
@@ -252,7 +214,7 @@ class Ruler(Generic[RuleFuncTv]):
         self.__cache__ = None
         return result
 
-    def getRules(self, chainName: str = "") -> list[RuleFuncTv]:
+    def getRules(self, chainName: str) -> list[RuleFunc]:
         """Return array of active functions (rules) for given chain name.
         It analyzes rules configuration, compiles caches if not exists and returns result.
 

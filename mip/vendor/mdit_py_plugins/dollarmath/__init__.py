@@ -1,3 +1,1 @@
-from .index import dollarmath_plugin
-
-__all__ = ("dollarmath_plugin",)
+from .index import dollarmath_plugin  # noqa F401

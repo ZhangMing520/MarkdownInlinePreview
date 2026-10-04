@@ -1,3 +1,4 @@
 [
-    { "keys": ["super+ctrl+m"], "command": "mip_toggle_preview" }
+    { "keys": ["super+ctrl+m"], "command": "mip_toggle_preview" },
+    { "keys": ["super+ctrl+shift+m"], "command": "mip_toggle_browser_preview" }
 ]

@@ -1,3 +1,4 @@
 [
-    { "caption": "MarkdownInlinePreview: Toggle Preview", "command": "mip_toggle_preview" }
+    { "caption": "MarkdownInlinePreview: Toggle Preview", "command": "mip_toggle_preview" },
+    { "caption": "MarkdownInlinePreview: Toggle Browser Live Preview", "command": "mip_toggle_browser_preview" }
 ]

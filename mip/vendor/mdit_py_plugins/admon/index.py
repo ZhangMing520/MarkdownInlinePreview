@@ -1,101 +1,59 @@
 # Process admonitions and pass to cb.
 
-from __future__ import annotations
-
-from collections.abc import Callable, Sequence
-from contextlib import suppress
-import re
-from typing import TYPE_CHECKING
+import math
+from typing import Callable, Optional, Tuple
 
 from markdown_it import MarkdownIt
 from markdown_it.rules_block import StateBlock
 
-from mdit_py_plugins.utils import is_code_block
 
-if TYPE_CHECKING:
-    from markdown_it.renderer import RendererProtocol
-    from markdown_it.token import Token
-    from markdown_it.utils import EnvType, OptionsDict
+def get_tag(params: str) -> Tuple[str, str]:
+    if not params.strip():
+        return "", ""
 
-
-def _get_multiple_tags(params: str) -> tuple[list[str], str]:
-    """Check for multiple tags when the title is double quoted."""
-    re_tags = re.compile(r'^\s*(?P<tokens>[^"]+)\s+"(?P<title>.*)"\S*$')
-    match = re_tags.match(params)
-    if match:
-        tags = match["tokens"].strip().split(" ")
-        return [tag.lower() for tag in tags], match["title"]
-    raise ValueError("No match found for parameters")
-
-
-def _get_tag(_params: str) -> tuple[list[str], str]:
-    """Separate the tag name from the admonition title."""
-    params = _params.strip()
-    if not params:
-        return [""], ""
-
-    with suppress(ValueError):
-        return _get_multiple_tags(params)
-
-    tag, *_title = params.split(" ")
+    tag, *_title = params.strip().split(" ")
     joined = " ".join(_title)
 
     title = ""
     if not joined:
         title = tag.title()
-    elif joined != '""':  # Specifically check for no title
+    elif joined != '""':
         title = joined
-    return [tag.lower()], title
+    return tag.lower(), title
 
 
-def _validate(params: str) -> bool:
-    """Validate the presence of the tag name after the marker."""
+def validate(params: str) -> bool:
     tag = params.strip().split(" ", 1)[-1] or ""
     return bool(tag)
 
 
-MARKER_LEN = 3  # Regardless of extra characters, block indent stays the same
-MARKERS = ("!!!", "???", "???+")
-MARKER_CHARS = {_m[0] for _m in MARKERS}
-MAX_MARKER_LEN = max(len(_m) for _m in MARKERS)
-
-
-def _extra_classes(markup: str) -> list[str]:
-    """Return the list of additional classes based on the markup."""
-    if markup.startswith("?"):
-        if markup.endswith("+"):
-            return ["is-collapsible collapsible-open"]
-        return ["is-collapsible collapsible-closed"]
-    return []
+MIN_MARKERS = 3
+MARKER_STR = "!"
+MARKER_CHAR = ord(MARKER_STR)
+MARKER_LEN = len(MARKER_STR)
 
 
 def admonition(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool:
-    if is_code_block(state, startLine):
-        return False
-
     start = state.bMarks[startLine] + state.tShift[startLine]
     maximum = state.eMarks[startLine]
 
     # Check out the first character quickly, which should filter out most of non-containers
-    if state.src[start] not in MARKER_CHARS:
+    if ord(state.src[start]) != MARKER_CHAR:
         return False
 
     # Check out the rest of the marker string
-    marker = ""
-    marker_len = MAX_MARKER_LEN
-    while marker_len > 0:
-        marker_pos = start + marker_len
-        markup = state.src[start:marker_pos]
-        if markup in MARKERS:
-            marker = markup
-            break
-        marker_len -= 1
-    else:
+    pos = start + 1
+    while pos <= maximum and MARKER_STR[(pos - start) % MARKER_LEN] == state.src[pos]:
+        pos += 1
+
+    marker_count = math.floor((pos - start) / MARKER_LEN)
+    if marker_count < MIN_MARKERS:
         return False
-
+    marker_pos = pos - ((pos - start) % MARKER_LEN)
     params = state.src[marker_pos:maximum]
+    markup = state.src[start:marker_pos]
 
-    if not _validate(params):
+    if not validate(params):
         return False
 
     # Since start is found, we can report success here in validation mode
@@ -106,14 +64,12 @@ def admonition(state: StateBlock, startLine: int, endLine: int, silent: bool) ->
     old_line_max = state.lineMax
     old_indent = state.blkIndent
 
-    blk_start = marker_pos
+    blk_start = pos
     while blk_start < maximum and state.src[blk_start] == " ":
         blk_start += 1
 
     state.parentType = "admonition"
-    # Correct block indentation when extra marker characters are present
-    marker_alignment_correction = MARKER_LEN - len(marker)
-    state.blkIndent += blk_start - start + marker_alignment_correction
+    state.blkIndent += blk_start - start
 
     was_empty = False
 
@@ -143,13 +99,12 @@ def admonition(state: StateBlock, startLine: int, endLine: int, silent: bool) ->
     # this will prevent lazy continuations from ever going past our end marker
     state.lineMax = next_line
 
-    tags, title = _get_tag(params)
-    tag = tags[0]
+    tag, title = get_tag(params)
 
     token = state.push("admonition_open", "div", 1)
     token.markup = markup
     token.block = True
-    token.attrs = {"class": " ".join(["admonition", *tags, *_extra_classes(markup)])}
+    token.attrs = {"class": f"admonition {tag}"}
     token.meta = {"tag": tag}
     token.content = title
     token.info = params
@@ -168,11 +123,12 @@ def admonition(state: StateBlock, startLine: int, endLine: int, silent: bool) ->
         token.children = []
 
         token = state.push("admonition_title_close", "p", -1)
+        token.markup = title_markup
 
     state.md.block.tokenize(state, startLine + 1, next_line)
 
     token = state.push("admonition_close", "div", -1)
-    token.markup = markup
+    token.markup = state.src[start:pos]
     token.block = True
 
     state.parentType = old_parent
@@ -183,7 +139,7 @@ def admonition(state: StateBlock, startLine: int, endLine: int, silent: bool) ->
     return True
 
 
-def admon_plugin(md: MarkdownIt, render: None | Callable[..., str] = None) -> None:
+def admon_plugin(md: MarkdownIt, render: Optional[Callable] = None) -> None:
     """Plugin to use
     `python-markdown style admonitions
     <https://python-markdown.github.io/extensions/admonition>`_.
@@ -193,27 +149,13 @@ def admon_plugin(md: MarkdownIt, render: None | Callable[..., str] = None) -> No
         !!! note
             *content*
 
-    `And mkdocs-style collapsible blocks
-    <https://squidfunk.github.io/mkdocs-material/reference/admonitions/#collapsible-blocks>`_.
-
-    .. code-block:: md
-
-        ???+ note
-            *content*
-
     Note, this is ported from
     `markdown-it-admon
     <https://github.com/commenthol/markdown-it-admon>`_.
     """
 
-    def renderDefault(
-        self: RendererProtocol,
-        tokens: Sequence[Token],
-        idx: int,
-        _options: OptionsDict,
-        env: EnvType,
-    ) -> str:
-        return self.renderToken(tokens, idx, _options, env)  # type: ignore[attr-defined,no-any-return]
+    def renderDefault(self, tokens, idx, _options, env):
+        return self.renderToken(tokens, idx, _options, env)
 
     render = render or renderDefault
 

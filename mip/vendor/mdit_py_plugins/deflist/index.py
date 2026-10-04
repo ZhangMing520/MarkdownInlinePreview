@@ -1,12 +1,9 @@
 """Process definition lists."""
-
 from markdown_it import MarkdownIt
 from markdown_it.rules_block import StateBlock
 
-from mdit_py_plugins.utils import is_code_block
 
-
-def deflist_plugin(md: MarkdownIt) -> None:
+def deflist_plugin(md: MarkdownIt):
     """Plugin ported from
     `markdown-it-deflist <https://github.com/markdown-it/markdown-it-deflist>`__.
 
@@ -25,8 +22,9 @@ def deflist_plugin(md: MarkdownIt) -> None:
         ~ Definition 2b
 
     """
+    isSpace = md.utils.isSpace
 
-    def skipMarker(state: StateBlock, line: int) -> int:
+    def skipMarker(state: StateBlock, line: int):
         """Search `[:~][\n ]`, returns next pos after marker on success or -1 on fail."""
         start = state.bMarks[line] + state.tShift[line]
         maximum = state.eMarks[line]
@@ -35,9 +33,9 @@ def deflist_plugin(md: MarkdownIt) -> None:
             return -1
 
         # Check bullet
-        marker = state.src[start]
+        marker = state.srcCharCode[start]
         start += 1
-        if marker != "~" and marker != ":":
+        if marker != 0x7E and marker != 0x3A:  # ~ :
             return -1
 
         pos = state.skipSpaces(start)
@@ -52,7 +50,7 @@ def deflist_plugin(md: MarkdownIt) -> None:
 
         return start
 
-    def markTightParagraphs(state: StateBlock, idx: int) -> None:
+    def markTightParagraphs(state: StateBlock, idx: int):
         level = state.level + 2
 
         i = idx + 2
@@ -67,10 +65,7 @@ def deflist_plugin(md: MarkdownIt) -> None:
                 i += 2
             i += 1
 
-    def deflist(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool:
-        if is_code_block(state, startLine):
-            return False
-
+    def deflist(state: StateBlock, startLine: int, endLine: int, silent: bool):
         if silent:
             # quirk: validation mode validates a dd block only, not a whole deflist
             if state.ddIndent < 0:
@@ -139,10 +134,13 @@ def deflist_plugin(md: MarkdownIt) -> None:
                 )
 
                 while pos < maximum:
-                    if state.src[pos] == "\t":
-                        offset += 4 - offset % 4
-                    elif state.src[pos] == " ":
-                        offset += 1
+                    ch = state.srcCharCode[pos]
+
+                    if isSpace(ch):
+                        if ch == 0x09:
+                            offset += 4 - offset % 4
+                        else:
+                            offset += 1
                     else:
                         break
 
@@ -162,7 +160,7 @@ def deflist_plugin(md: MarkdownIt) -> None:
                 state.tight = True
                 state.parentType = "deflist"
 
-                state.md.block.tokenize(state, ddLine, endLine)
+                state.md.block.tokenize(state, ddLine, endLine, True)
 
                 # If any of list item is tight, mark list as tight
                 if not state.tight or prevEmptyEnd:

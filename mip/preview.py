@@ -6,6 +6,8 @@
 
 import logging
 import os
+import re
+
 import sublime
 import sublime_plugin
 
@@ -17,6 +19,47 @@ logger = logging.getLogger("MarkdownInlinePreview")
 
 # 预览视图的内部标记（settings 里打这个 tag，用于识别预览视图、避免误伤普通视图）
 PREVIEW_SETTINGS_KEY = "mip_preview"
+
+
+def is_preview_view(view):
+    """是否 mip 打开的预览视图。内部 tag 的编码只在这一处，其他模块用它判断。"""
+
+    return bool(view.settings().get(PREVIEW_SETTINGS_KEY, False))
+
+
+def read_source(view):
+    """源视图全文 + 图片基准目录（未落盘文件为 None）。两种预览共用。"""
+
+    text = view.substr(sublime.Region(0, view.size()))
+    name = view.file_name()
+    return text, (os.path.dirname(name) if name else None)
+
+
+def cursor_ratio(view):
+    """光标行 / 总行数（0~1），两种预览的近似比例定位共用。"""
+
+    row, _ = view.rowcol(view.sel()[0].begin())
+    return row / (view.line_count() or 1)
+
+
+def schedule_debounced(holder, delay_ms, render):
+    """代际防抖：sublime.set_timeout 无法取消，旧 timer 靠比对 holder._gen 自行失效。
+
+    preview / browser 两个 manager 共用（各自初始化 _gen = 0）。
+    """
+
+    holder._gen += 1
+    gen = holder._gen
+
+    def _go():
+        # 只有最后一次 schedule 的 gen 仍为最新才渲染
+        if gen == holder._gen:
+            render()
+
+    sublime.set_timeout(_go, delay_ms)
+
+# 块 HTML 里的元素 id（toc/anchors 扩展生成），供 #锚点 链接跳转定位块
+_ID_RE = re.compile(r"""\bid=["']([^"']+)["']""")
 
 # 每窗口维护一个预览管理器（plan：一个窗口只一个预览，绑定源视图）
 _MANAGERS = {}
@@ -49,8 +92,12 @@ class PreviewManager:
         self.view = None
         self._orig_layout = None
         self._orig_group = 0
-        self._keys = []
-        # 防抖代际：sublime.set_timeout 无法取消，旧 timer 靠比对 gen 自行失效
+        # 上次渲染的原始块列表：增量更新用它差分（phantom 数 = len，无需另存 key 列表），
+        # 未变的块原地保留，避免全量重插的闪烁
+        self._last_blocks = None
+        # 元素 id → 块序号，#锚点 跳转用
+        self._anchors = {}
+        # 防抖代际（schedule_debounced 用）
         self._gen = 0
 
     # -- 生命周期 ----------------------------------------------------------
@@ -115,18 +162,8 @@ class PreviewManager:
     # -- 渲染（逐块 phantom）-----------------------------------------------
 
     def schedule_render(self):
-        cfg = mip_settings.get_settings()
-        delay = cfg.get("refresh_delay_ms", 300)
-        self._gen += 1
-        gen = self._gen
-
-        def _go():
-            # set_timeout 不可取消：只有最后一次 schedule 的 gen 仍为最新才渲染
-            if gen != self._gen:
-                return
-            self.render()
-
-        sublime.set_timeout(_go, delay)
+        delay = mip_settings.get_settings().get("refresh_delay_ms", 300)
+        schedule_debounced(self, delay, self.render)
 
     def render(self):
         if not self.is_open() or self.source is None or not self.source.is_valid():
@@ -137,8 +174,7 @@ class PreviewManager:
             sublime.status_message("MarkdownInlinePreview: " + msg)
         if engine is None:
             return
-        text = self.source.substr(sublime.Region(0, self.source.size()))
-        base_dir = os.path.dirname(self.source.file_name()) if self.source.file_name() else None
+        text, base_dir = read_source(self.source)
         try:
             html = render_html(text, cfg, engine, base_dir=base_dir)
         except Exception:
@@ -149,24 +185,51 @@ class PreviewManager:
 
     def _update_phantoms(self, blocks):
         view = self.view
-        self._erase_phantoms()
-        view.set_read_only(False)
-        view.run_command("_mip_set_text", {"text": "\n" * max(len(blocks) - 1, 0)})
-        new_keys = []
+        if self._last_blocks is not None and len(self._last_blocks) == len(blocks):
+            # 增量：块数不变时只重插内容有变化的块（DEFAULT_STYLE 是常量，diff 原始块即可）
+            changed = [i for i, b in enumerate(blocks) if b != self._last_blocks[i]]
+            if not changed:
+                return
+            self._update_anchors(blocks)
+            view.set_read_only(False)
+            for i in changed:
+                self._erase_phantom(i)
+                self._add_phantom(i, DEFAULT_STYLE + blocks[i])
+            view.set_read_only(True)
+        else:
+            # 块数变化（或首次）：整版重写占位缓冲与全部 phantom
+            self._update_anchors(blocks)
+            self._erase_phantoms()
+            view.set_read_only(False)
+            view.run_command("_mip_set_text", {"text": "\n" * max(len(blocks) - 1, 0)})
+            for i, blk in enumerate(blocks):
+                self._add_phantom(i, DEFAULT_STYLE + blk)
+            view.set_read_only(True)
+        self._last_blocks = blocks
+
+    def _add_phantom(self, i, content):
+        # 每个 phantom 是独立 minihtml 文档，逐块前置样式（content 已含 DEFAULT_STYLE）
+        self.view.add_phantom(
+            "mip_block_%d" % i, self.view.line(i), content,
+            sublime.LAYOUT_BLOCK, on_navigate=self._on_navigate
+        )
+
+    def _erase_phantom(self, i):
+        self.view.erase_phantom("mip_block_%d" % i)
+
+    def _update_anchors(self, blocks):
+        anchors = {}
         for i, blk in enumerate(blocks):
-            key = "mip_block_%d" % i
-            # 每个 phantom 是独立 minihtml 文档，逐块前置样式
-            view.add_phantom(key, view.line(i), DEFAULT_STYLE + blk, sublime.LAYOUT_BLOCK, on_navigate=self._on_navigate)
-            new_keys.append(key)
-        view.set_read_only(True)
-        self._keys = new_keys
+            for elem_id in _ID_RE.findall(blk):
+                anchors.setdefault(elem_id, i)
+        self._anchors = anchors
 
     def _erase_phantoms(self):
         if self.view is None:
             return
-        for k in self._keys:
-            self.view.erase_phantom(k)
-        self._keys = []
+        # phantom 与 _last_blocks 一一对应（key 按序号生成），无需另存 key 列表
+        for i in range(len(self._last_blocks or ())):
+            self.view.erase_phantom("mip_block_%d" % i)
 
     # -- 交互 --------------------------------------------------------------
 
@@ -175,17 +238,20 @@ class PreviewManager:
             import webbrowser
             webbrowser.open(href)
         elif href.startswith("#"):
-            # v0.2：文内锚点 #heading → 定位对应块并 view.show()
-            pass
+            # 文内锚点：定位 id 所在块并滚动过去（toc/anchors 扩展负责生成 id）
+            idx = self._anchors.get(href[1:])
+            if idx is not None:
+                try:
+                    self.view.show(self.view.line(idx), True)
+                except Exception:
+                    pass
 
     def sync_scroll(self, source):
         # 块级近似对齐：源光标行按比例映射到预览对应块（非像素级）
         if not self.is_open() or not source.sel():
             return
-        row, _ = source.rowcol(source.sel()[0].begin())
-        total = source.line_count() or 1
-        blocks = len(self._keys) or 1
-        target = min(int(row / total * blocks), blocks - 1)
+        blocks = len(self._last_blocks) or 1
+        target = min(int(cursor_ratio(source) * blocks), blocks - 1)
         try:
             self.view.show(self.view.line(target), True)
         except Exception:
@@ -212,7 +278,7 @@ def plugin_loaded():
     closed = 0
     for w in sublime.windows():
         for v in w.views():
-            if v.settings().get(PREVIEW_SETTINGS_KEY, False):
+            if is_preview_view(v):
                 v.close()
                 closed += 1
     if closed:

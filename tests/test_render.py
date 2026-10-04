@@ -21,8 +21,75 @@ PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBA
 def test_convert_tables():
     out = convert_tables("<table><tr><td>1</td><td>2</td></tr></table>")
     assert "<table" not in out
-    assert "display:inline-block" in out
+    assert "mip-tgrid" in out
     assert "1" in out and "2" in out
+    # nbsp 补齐列宽是跨行对齐的机制
+    assert "&nbsp;" in out
+
+
+def test_convert_tables_header_detected():
+    out = convert_tables(
+        "<table><thead><tr><th>h1</th><th>h2</th></tr></thead>"
+        "<tbody><tr><td>a</td><td>b</td></tr></tbody></table>"
+    )
+    assert "mip-tgrid" in out
+    assert "font-weight:bold" in out  # 表头行
+
+
+def test_convert_tables_wide_falls_back_to_cards():
+    # 单列内容 100 半角 → 总宽超阈值，网格会裁切，必须走卡片布局
+    wide = "x" * 100
+    out = convert_tables(
+        "<table><thead><tr><th>k</th></tr></thead>"
+        "<tbody><tr><td>%s</td></tr></tbody></table>" % wide
+    )
+    assert "mip-tgrid" not in out
+    assert "mip-tcards" in out
+    assert wide in out
+
+
+def test_convert_tables_cjk_width():
+    # 40 个 CJK 字符 = 80 半角单位，超过 72 的网格阈值
+    out = convert_tables(
+        "<table><thead><tr><th>列</th></tr></thead>"
+        "<tbody><tr><td>%s</td></tr></tbody></table>" % ("汉" * 40)
+    )
+    assert "mip-tcards" in out
+
+
+def test_convert_tables_rich_cell_falls_back_to_cards():
+    # 含 img 的窄表：nbsp 补齐测不出图片宽度，网格对齐必然失效 → 卡片
+    out = convert_tables(
+        "<table><tr><td><img src=\"a.png\" alt=\"pic\"></td><td>ok</td></tr></table>"
+    )
+    assert "mip-tgrid" not in out
+    assert "mip-tcards" in out
+    assert "<img" in out
+    # 块级内容同理
+    out = convert_tables(
+        "<table><tr><td><div>block</div></td><td>ok</td></tr></table>"
+    )
+    assert "mip-tgrid" not in out and "mip-tcards" in out
+
+
+def test_convert_tables_narrow_cjk_grid():
+    # 短 CJK 内容（依赖 4 + 方式 4 → 总宽远小于阈值）应留在网格且补齐数按 CJK=2 计
+    out = convert_tables(
+        "<table><thead><tr><th>依赖</th><th>方式</th></tr></thead>"
+        "<tbody><tr><td>a</td><td>b</td></tr></tbody></table>"
+    )
+    assert "mip-tgrid" in out
+    # "依赖" 列宽 4，"a" 需补 4-1+2(gutter)=5 个 nbsp
+    assert "a&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" in out
+
+
+def test_convert_tables_card_labels():
+    out = convert_tables(
+        "<table><thead><tr><th>col1</th><th>col2</th></tr></thead>"
+        "<tbody><tr><td>%s</td><td>val</td></tr></tbody></table>" % ("x" * 100)
+    )
+    # 卡片内非首列带表头名前缀
+    assert "col2:" in out and "val" in out
 
 
 def test_convert_inputs():
@@ -55,9 +122,9 @@ def test_front_matter_to_table():
     assert table is not None
     assert "Hi" in table and "bar" in table
     assert "display:inline-block" not in table  # 仍是 <table>，未转
-    # 端到端：front matter 经转换层变 div 网格
+    # 端到端：front matter 经转换层变网格（窄表）
     out = render_html(md, SETTINGS, PythonMarkdownEngine())
-    assert "display:inline-block" in out
+    assert "mip-tgrid" in out
     assert "Hi" in out
 
 
@@ -69,11 +136,18 @@ def test_split_blocks():
 def test_render_html_end_to_end():
     md = "# T\n\n| a | b |\n|---|---|\n| 1 | 2 |"
     out = render_html(md, SETTINGS, PythonMarkdownEngine())
-    assert "display:inline-block" in out   # table → div 网格
+    assert "mip-tgrid" in out   # table → 等宽字体网格（窄表）
     # 样式不再由 render_html 嵌入，而由 preview.py 逐块前置 DEFAULT_STYLE
     assert "<style>" not in out
-    # 任务列表(- [ ]) / 删除线(~~x~~) 默认扩展不产出 <input>/<del>，需 v0.2 的 GFM 扩展；
-    # 转换逻辑由 test_convert_inputs / test_convert_strikethrough 单独覆盖。
+
+
+def test_render_html_default_engine_gfm():
+    # vendored pymdownx 子集：默认引擎直接产出 <input>/<del>，转换层转成 minihtml 形态
+    md = "- [x] done\n\n~~gone~~"
+    out = render_html(md, SETTINGS, PythonMarkdownEngine())
+    assert "[x]" in out                       # checkbox → [x]
+    assert "line-through" in out and "gone" in out
+    assert "<input" not in out and "<del" not in out
 
 
 def test_split_blocks_preserves_entities():

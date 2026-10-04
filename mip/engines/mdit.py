@@ -6,37 +6,32 @@ CommonMark 还原度最高，配合 mdit-py-plugins 提供 GFM 表格 / 任务�
 front matter 由 mip.render 统一在引擎前抽取，不在此装配对应插件。
 """
 
-import os
-import sys
-
-# 把 vendor 目录临时加入 sys.path，使 markdown_it / mdurl / mdit_py_plugins 可被顶层 import。
-# import 完成后立即移除，避免永久遮蔽其他插件的同名顶层模块；
-# 已导入包的子模块靠包自己的 __path__ 解析，移除 sys.path 条目不影响后续懒加载。
-# mdit.py 位于 mip/engines/，vendor 在 mip/vendor，故取上级目录再拼 vendor
-_VENDOR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "vendor")
-_added = _VENDOR not in sys.path
-if _added:
-    sys.path.insert(0, _VENDOR)
-try:
-    from markdown_it import MarkdownIt
-    from mdit_py_plugins.gfm import gfm_plugin  # 含 GFM 表格 + 删除线(~x~)
-    from mdit_py_plugins.tasklists import tasklists_plugin
-finally:
-    if _added:
-        sys.path.remove(_VENDOR)
-
+from .. import vendor_loader
 from .engine import Engine
+
+# 解析并临时激活 vendor 路径：解包安装直接用目录；zip 安装（PC 发布形态）解压到缓存。
+# markdown_it / mdurl / mdit_py_plugins 以顶层名绝对 import（markdown_it 内部亦然），
+# 无法改走包相对路径，故必须在 sys.path 激活窗口内完成 import。
+with vendor_loader.activate():
+    from markdown_it import MarkdownIt
+    from mdit_py_plugins.anchors import anchors_plugin
+    from mdit_py_plugins.tasklists import tasklists_plugin
 
 
 class MarkdownItEngine(Engine):
     name = "markdown-it-py"
 
     def __init__(self):
-        # 显式装配 GFM 插件（不依赖 preset，保证表格/任务列表/删除线都在）
+        # "default" preset（对应 JS markdown-it 默认档）自带 GFM 表格 + 删除线(~x~)；
+        # 3.8 宿主只能跑 vendored 2.2.0，其生态没有聚合版 gfm 插件（0.6.x 才有，
+        # 而 0.6.x 需要 3.9+），任务列表单独装 tasklists。
+        # html=True 与 python-markdown 引擎行为对齐（允许内联原始 HTML）；
+        # linkify=False：linkify-it-py 不 vendor，自动链接交给 GFM 的尖括号语法；
+        # anchors 给标题生成 id（预览内 #锚点 跳转依赖；python-markdown 引擎用 toc 扩展）
         self._md = (
-            MarkdownIt("commonmark")
-            .use(gfm_plugin)
+            MarkdownIt("default", {"html": True, "linkify": False})
             .use(tasklists_plugin)
+            .use(anchors_plugin)
         )
 
     def render(self, text: str, settings: dict) -> str:

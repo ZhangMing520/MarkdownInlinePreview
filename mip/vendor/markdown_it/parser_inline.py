@@ -1,72 +1,15 @@
-"""Tokenizes paragraph content."""
-
+"""Tokenizes paragraph content.
+"""
 from __future__ import annotations
 
-from collections.abc import Callable
-import functools
-import re
-from typing import TYPE_CHECKING
-
 from . import rules_inline
-from .ruler import Ruler
+from .ruler import RuleFunc, Ruler
 from .rules_inline.state_inline import StateInline
 from .token import Token
-from .utils import EnvType
-
-if TYPE_CHECKING:
-    from markdown_it import MarkdownIt
-
-
-# Default set of characters that terminate a text token and allow inline rules to fire.
-# '{}$%@~+=:' reserved for extensions.
-# Note: Don't confuse with "Markdown ASCII Punctuation" chars.
-# http://spec.commonmark.org/0.15/#ascii-punctuation-character
-_DEFAULT_TERMINATORS: frozenset[str] = frozenset(
-    {
-        "\n",
-        "!",
-        "#",
-        "$",
-        "%",
-        "&",
-        "*",
-        "+",
-        "-",
-        ":",
-        "<",
-        "=",
-        ">",
-        "@",
-        "[",
-        "\\",
-        "]",
-        "^",
-        "_",
-        "`",
-        "{",
-        "}",
-        "~",
-    }
-)
-
-
-# Lazily compiled regex for the default terminator set.  The @cache ensures it is
-# compiled at most once (on first ParserInline instantiation) and shared across all
-# instances that have not added extra chars, keeping __init__ cost near zero.
-@functools.cache
-def _default_terminator_re() -> re.Pattern[str]:
-    return re.compile("[" + re.escape("".join(_DEFAULT_TERMINATORS)) + "]")
-
 
 # Parser rules
-RuleFuncInlineType = Callable[[StateInline, bool], bool]
-"""(state: StateInline, silent: bool) -> matched: bool)
-
-`silent` disables token generation, useful for lookahead.
-"""
-_rules: list[tuple[str, RuleFuncInlineType]] = [
+_rules: list[tuple[str, RuleFunc]] = [
     ("text", rules_inline.text),
-    ("linkify", rules_inline.linkify),
     ("newline", rules_inline.newline),
     ("escape", rules_inline.escape),
     ("backticks", rules_inline.backtick),
@@ -79,55 +22,23 @@ _rules: list[tuple[str, RuleFuncInlineType]] = [
     ("entity", rules_inline.entity),
 ]
 
-# Note `rule2` ruleset was created specifically for emphasis/strikethrough
-# post-processing and may be changed in the future.
-#
-# Don't use this for anything except pairs (plugins working with `balance_pairs`).
-#
-RuleFuncInline2Type = Callable[[StateInline], None]
-_rules2: list[tuple[str, RuleFuncInline2Type]] = [
+_rules2: list[tuple[str, RuleFunc]] = [
     ("balance_pairs", rules_inline.link_pairs),
     ("strikethrough", rules_inline.strikethrough.postProcess),
     ("emphasis", rules_inline.emphasis.postProcess),
-    # rules for pairs separate '**' into its own text tokens, which may be left unused,
-    # rule below merges unused segments back with the rest of the text
-    ("fragments_join", rules_inline.fragments_join),
+    ("text_collapse", rules_inline.text_collapse),
 ]
 
 
 class ParserInline:
-    def __init__(self) -> None:
-        self.ruler = Ruler[RuleFuncInlineType]()
+    def __init__(self):
+        self.ruler = Ruler()
         for name, rule in _rules:
             self.ruler.push(name, rule)
         # Second ruler used for post-processing (e.g. in emphasis-like rules)
-        self.ruler2 = Ruler[RuleFuncInline2Type]()
+        self.ruler2 = Ruler()
         for name, rule2 in _rules2:
             self.ruler2.push(name, rule2)
-        # Characters that stop the text rule, allowing other inline rules to fire.
-        # _extra_terminator_chars is only allocated when add_terminator_char() is called
-        # with a char outside the defaults, keeping __init__ allocation-free.
-        self._extra_terminator_chars: set[str] = set()
-        # Pre-compiled regex shared with all default instances (no copy in the common path).
-        self.terminator_re: re.Pattern[str] = _default_terminator_re()
-
-    def add_terminator_char(self, ch: str) -> None:
-        """Register a character that stops the ``text`` rule, allowing inline rules to fire.
-
-        This lets plugins declare which characters their inline rules react to,
-        mirroring the ``MARKER`` mechanism in the Rust markdown-it implementation.
-
-        :param ch: A single character to add to the terminator set.
-        """
-        if ch not in _DEFAULT_TERMINATORS and ch not in self._extra_terminator_chars:
-            self._extra_terminator_chars.add(ch)
-            self.terminator_re = re.compile(
-                "["
-                + re.escape(
-                    "".join(_DEFAULT_TERMINATORS | self._extra_terminator_chars)
-                )
-                + "]"
-            )
 
     def skipToken(self, state: StateInline) -> None:
         """Skip single token by running all rules in validation mode;
@@ -203,9 +114,7 @@ class ParserInline:
         if state.pending:
             state.pushPending()
 
-    def parse(
-        self, src: str, md: MarkdownIt, env: EnvType, tokens: list[Token]
-    ) -> list[Token]:
+    def parse(self, src: str, md, env, tokens: list[Token]) -> list[Token]:
         """Process input string and push inline tokens into `tokens`"""
         state = StateInline(src, md, env, tokens)
         self.tokenize(state)

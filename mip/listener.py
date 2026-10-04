@@ -9,6 +9,7 @@ import logging
 
 import sublime_plugin
 
+from . import browser as browser_mod
 from . import preview as preview_mod
 from . import settings as mip_settings
 
@@ -20,33 +21,41 @@ class MipSourceListener(sublime_plugin.ViewEventListener):
 
     @classmethod
     def is_applicable(cls, view):
-        return not view.settings().get(preview_mod.PREVIEW_SETTINGS_KEY, False)
+        return not preview_mod.is_preview_view(view)
 
-    def _mgr(self):
-        if self.view.window() is None:
-            return None
-        return preview_mod.get_manager(self.view.window().id())
+    def _managers(self):
+        """本视图可能关联的两种预览管理器（minihtml 内嵌 + 浏览器实时）。"""
+
+        window = self.view.window()
+        if window is None:
+            return ()
+        wid = window.id()
+        return tuple(m for m in (preview_mod.get_manager(wid), browser_mod.get_manager(wid)) if m)
 
     def on_modified_async(self):
-        mgr = self._mgr()
-        if mgr is not None and mgr.is_source(self.view):
-            mgr.schedule_render()
+        for mgr in self._managers():
+            if mgr.is_source(self.view):
+                mgr.schedule_render()
 
     def on_selection_modified_async(self):
         if not mip_settings.get_settings().get("sync_scroll", True):
             return
-        mgr = self._mgr()
-        if mgr is not None and mgr.is_source(self.view):
-            mgr.sync_scroll(self.view)
+        for mgr in self._managers():
+            if mgr.is_source(self.view):
+                mgr.sync_scroll(self.view)
 
 
 class MipCloseListener(sublime_plugin.EventListener):
-    """全局 on_close：源视图关闭 → 关预览；预览视图被手动关闭 → 还原布局。"""
+    """全局 on_close：源视图关闭 → 关两种预览；预览视图被手动关闭 → 还原布局。"""
 
     def on_close(self, view):
         window = view.window()
         if window is None:
             return
+        # 源视图关闭 → 停止浏览器实时预览（浏览器标签页保留最后内容）
+        bmgr = browser_mod.get_manager(window.id())
+        if bmgr is not None and bmgr.is_source(view):
+            browser_mod.forget_manager(window.id())
         mgr = preview_mod.get_manager(window.id())
         if mgr is None:
             return

@@ -88,7 +88,7 @@ MarkdownInlinePreview/
 | python-markdown | `dependencies.json` 声明 | PC 依赖频道现成有（OmniMarkupPreviewer 同路线） |
 | pygments | `dependencies.json` 声明 | 用于 codehilite 代码高亮 |
 | markdown-it-py | v0.2 再定：vendor 进包（MIT，纯 Python）或向 PC 依赖频道提 PR | 不作为 v0.1 依赖 |
-| pymdown-extensions（子集） | vendor 进包（MIT，纯 Python） | 仅取 tasklist / strikethrough 扩展，补齐 python-markdown 缺的 GFM 能力；非 v0.1 必需 |
+| pymdown-extensions（子集） | ✅ 已 vendor（10.15 取 5 个文件：tasklist/tilde/util 等） | 默认引擎的任务列表与删除线；经 vendor_loader.activate() 激活，zip 安装同样解压可用 |
 | ~~MarkdownPreview~~ | 不依赖 | 用户明确要求；如将来需要"与浏览器预览一致"，允许用户配置 engine 指向已安装的 MarkdownPreview 作为可选引擎，但不是包的依赖 |
 
 > vendor 说明：把第三方库的**纯 Python 源码**直接复制进包内（如 `mip/vendor/markdown_it/`）随插件分发，
@@ -135,19 +135,32 @@ MarkdownInlinePreview/
 - [x] 仓库骨架 + sublime shim 测试基座跑通
 - [x] `preview` 命令：同窗口分栏打开**空白预览视图**，按顶层块插入多个 phantom（逐块，非单 LAYOUT_BLOCK）
 - [x] python-markdown 引擎（tables/fenced_code/sane_lists/attr_list/md_in_html）+ pygments 高亮
-      （任务列表/删除线由 v0.2 的 markdown-it-py 引擎补齐，默认引擎下以 `[ ]`/字面显示）
+      （任务列表/删除线：v0.2 起 mdit 引擎原生支持；默认引擎经 vendored pymdownx 子集同样支持）
 - [x] on_modified 防抖实时刷新
 - [x] 图片 base64 内嵌（本地 + 远程异步）
 - [x] 关闭预览还原原布局
 - [x] 快捷键（默认 `ctrl+alt+m`；macOS 映射 `super+ctrl+m`，keymap 分 Default / OSX 两个文件写）+ 设置文件带注释
+- [x] 锚点跳转（预览内 `#heading` 链接 → 定位并滚动到对应块；两引擎均有标题 id）
+- [x] zip 安装兼容（vendor/assets 按需解压到 sublime.cache_path()，按 zip mtime+size 缓存键清理旧目录）
 - 验收：本机 Sublime 打开任意 README，边写边看，表格(经 div 转换)/代码块高亮/任务列表(经转换)正常显示。
 
 ### v0.2 — 体验
 - [x] 编辑器→预览同步滚动（编辑器行 → 对应块的 host 行 `view.show()`，**块级近似对齐**，非像素级；不做反向）
 - [x] YAML front matter 渲染为表格
 - [x] markdown-it-py 引擎 + mdit-py-plugins（tables/tasklists/strikethrough，已 vendor 进 mip/vendor）
+      ⚠️ 版本组合钉死在 **markdown-it-py 2.2.0 + mdit-py-plugins 0.3.5**：3.8 宿主跑不了 4.x/0.6.x
+      （`collections.abc.MutableMapping[...]` 运行时下标是 3.9+ 语法）。表格/删除线由 2.2.0 的
+      `"default"` preset 提供（其生态 0.3.x 没有聚合 gfm 插件），任务列表单独装 tasklists。
+      将来切 ST 3.14 宿主（Build 4213+）时可升回 4.x + 0.6.x，各一行改动。
 - [x] 引擎降级与状态栏提示（缺库降级 + `sublime.status_message`）
-- [ ] 增量渲染候选：ST4 `on_text_changed` 带变更范围，长文档只重渲染受影响块（300ms 防抖+全篇重渲染在千行文档上可感知卡顿）——**v0.3 后优化项，未实现**
+- [x] **浏览器实时预览**（`ctrl+alt+shift+m` / macOS `super+ctrl+shift+m`）：内置 127.0.0.1 HTTP
+      服务器（`mip/browser_server.py`，纯 Python 可单测）+ SSE 推送 + EventSource 自动重连。
+      复用同一引擎但**跳过 minihtml 标签转换层**——浏览器原生渲染 `<table>`/`<input>`/`<del>`，
+      GitHub 风格 CSS 全内嵌（亮暗跟随系统）、pygments 高亮、离线零外部请求。
+      这是"跳出 minihtml 限制"的正式通道：KaTeX/mermaid 已 vendor 进 mip/assets（`browser_extras`
+      设置可关，npmmirror 下载，woff2 字体齐全，客户端 auto-render + mermaid.run 随 SSE 更新重跑）。
+- [x] 增量 phantom 更新：块数不变时只重插内容变化的块（差分对比，未变块原地保留消除闪烁）；
+      全篇 HTML 重渲染仍在主线程（引擎实例有状态，线程化有竞态风险，暂不做）
 
 ### v0.3 — 发布件
 - [x] 路径补全（`on_query_completions`：`![](` / `[](` 触发文件路径补全）
@@ -158,7 +171,8 @@ MarkdownInlinePreview/
 
 ## 明确不做的（架构死路，防止范围蔓延）
 
-- KaTeX / mermaid —— 依赖 JS，minihtml 禁止 `<script>`；若强需求只能外部工具预渲染 SVG，另立项。
+- minihtml 模式下的 KaTeX / mermaid —— 依赖 JS，minihtml 禁止 `<script>`；已通过浏览器实时
+  预览模式实现（vendor JS 进包），minihtml 内仍不做。
 - 预览内 Ctrl+F —— phantom 内容不进缓冲区。
 - 预览→编辑器反向同步滚动 —— phantom 不接收滚动事件。
 - 拖拽图片插入 —— Sublime 未向插件暴露文件拖放事件。

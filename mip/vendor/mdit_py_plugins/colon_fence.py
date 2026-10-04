@@ -1,21 +1,9 @@
-from __future__ import annotations
-
-from collections.abc import Sequence
-from typing import TYPE_CHECKING
-
 from markdown_it import MarkdownIt
 from markdown_it.common.utils import escapeHtml, unescapeAll
 from markdown_it.rules_block import StateBlock
 
-from mdit_py_plugins.utils import is_code_block
 
-if TYPE_CHECKING:
-    from markdown_it.renderer import RendererProtocol
-    from markdown_it.token import Token
-    from markdown_it.utils import EnvType, OptionsDict
-
-
-def colon_fence_plugin(md: MarkdownIt) -> None:
+def colon_fence_plugin(md: MarkdownIt):
     """This plugin directly mimics regular fences, but with `:` colons.
 
     Example::
@@ -35,25 +23,27 @@ def colon_fence_plugin(md: MarkdownIt) -> None:
     md.add_render_rule("colon_fence", _render)
 
 
-def _rule(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool:
-    if is_code_block(state, startLine):
-        return False
-
+def _rule(state: StateBlock, startLine: int, endLine: int, silent: bool):
     haveEndMarker = False
     pos = state.bMarks[startLine] + state.tShift[startLine]
     maximum = state.eMarks[startLine]
 
+    # if it's indented more than 3 spaces, it should be a code block
+    if state.sCount[startLine] - state.blkIndent >= 4:
+        return False
+
     if pos + 3 > maximum:
         return False
 
-    marker = state.src[pos]
+    marker = state.srcCharCode[pos]
 
-    if marker != ":":
+    # /* : */
+    if marker != 0x3A:
         return False
 
     # scan marker length
     mem = pos
-    pos = _skipCharsStr(state, pos, marker)
+    pos = state.skipChars(pos, marker)
 
     length = pos - mem
 
@@ -86,13 +76,14 @@ def _rule(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool
             #  test
             break
 
-        if state.src[pos] != marker:
+        if state.srcCharCode[pos] != marker:
             continue
 
-        if is_code_block(state, nextLine):
+        if state.sCount[nextLine] - state.blkIndent >= 4:
+            # closing fence should be indented less than 4 spaces
             continue
 
-        pos = _skipCharsStr(state, pos, marker)
+        pos = state.skipChars(pos, marker)
 
         # closing code fence must be at least as long as the opening one
         if pos - mem < length:
@@ -122,27 +113,7 @@ def _rule(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool
     return True
 
 
-def _skipCharsStr(state: StateBlock, pos: int, ch: str) -> int:
-    """Skip character string from given position."""
-    # TODO this can be replaced with StateBlock.skipCharsStr in markdown-it-py 3.0.0
-    while True:
-        try:
-            current = state.src[pos]
-        except IndexError:
-            break
-        if current != ch:
-            break
-        pos += 1
-    return pos
-
-
-def _render(
-    self: RendererProtocol,
-    tokens: Sequence[Token],
-    idx: int,
-    options: OptionsDict,
-    env: EnvType,
-) -> str:
+def _render(self, tokens, idx, options, env):
     token = tokens[idx]
     info = unescapeAll(token.info).strip() if token.info else ""
     content = escapeHtml(token.content)

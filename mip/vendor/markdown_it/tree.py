@@ -2,7 +2,6 @@
 
 This module is not part of upstream JavaScript markdown-it.
 """
-
 from __future__ import annotations
 
 from collections.abc import Generator, Sequence
@@ -10,6 +9,7 @@ import textwrap
 from typing import Any, NamedTuple, TypeVar, overload
 
 from .token import Token
+from .utils import _removesuffix
 
 
 class _NesterTokens(NamedTuple):
@@ -51,7 +51,7 @@ class SyntaxTreeNode:
 
         # Empty list unless a non-empty container, or unnested token that has
         # children (i.e. inline or img)
-        self._children: list[Any] = []
+        self._children: list = []
 
         if create_root:
             self._set_children_from_tokens(tokens)
@@ -79,10 +79,12 @@ class SyntaxTreeNode:
         return f"{type(self).__name__}({self.type})"
 
     @overload
-    def __getitem__(self: _NodeType, item: int) -> _NodeType: ...
+    def __getitem__(self: _NodeType, item: int) -> _NodeType:
+        ...
 
     @overload
-    def __getitem__(self: _NodeType, item: slice) -> list[_NodeType]: ...
+    def __getitem__(self: _NodeType, item: slice) -> list[_NodeType]:
+        ...
 
     def __getitem__(self: _NodeType, item: int | slice) -> _NodeType | list[_NodeType]:
         return self.children[item]
@@ -117,7 +119,7 @@ class SyntaxTreeNode:
 
     @property
     def parent(self: _NodeType) -> _NodeType | None:
-        return self._parent  # type: ignore
+        return self._parent
 
     @parent.setter
     def parent(self: _NodeType, value: _NodeType | None) -> None:
@@ -162,7 +164,7 @@ class SyntaxTreeNode:
         if self.token:
             return self.token.type
         assert self.nester_tokens
-        return self.nester_tokens.opening.type.removesuffix("_open")
+        return _removesuffix(self.nester_tokens.opening.type, "_open")
 
     @property
     def next_sibling(self: _NodeType) -> _NodeType | None:
@@ -228,12 +230,7 @@ class SyntaxTreeNode:
         if not self.is_root and self.attrs:
             text += " " + " ".join(f"{k}={v!r}" for k, v in self.attrs.items())
         text += ">"
-        if (
-            show_text
-            and not self.is_root
-            and self.type in ("text", "text_special")
-            and self.content
-        ):
+        if show_text and not self.is_root and self.type == "text" and self.content:
             text += "\n" + textwrap.indent(self.content, prefix + " " * indent)
         for child in self.children:
             text += "\n" + child.pretty(
@@ -274,7 +271,7 @@ class SyntaxTreeNode:
 
     @property
     def tag(self) -> str:
-        """html tag name, e.g. \"p\""""
+        """html tag name, e.g. \"p\" """
         return self._attribute_token().tag
 
     @property
@@ -317,7 +314,7 @@ class SyntaxTreeNode:
         return self._attribute_token().info
 
     @property
-    def meta(self) -> dict[Any, Any]:
+    def meta(self) -> dict:
         """A place for plugins to store an arbitrary data."""
         return self._attribute_token().meta
 

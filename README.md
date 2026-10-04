@@ -6,9 +6,15 @@
 
 ## 功能
 
-- 同窗口分栏预览，编辑器内 phantom 渲染，边写边看
+**两种预览模式**（互补）：
+
+- **内嵌预览**（`ctrl+alt+m`）：同窗口分栏，编辑器内 phantom 渲染，边写边看，不切窗口
+- **浏览器实时预览**（`ctrl+alt+shift+m`）：内置本地服务器 + SSE 推送，浏览器原生渲染，
+  完整 GitHub 样式、原生表格/复选框；**KaTeX 数学公式与 mermaid 图**已 vendor 进包（离线可用，
+  `browser_extras` 设置可关）
 - 刷新防抖（默认 300ms），大文档不卡
-- GFM 渲染：表格、代码高亮(pygments)、任务列表、删除线、front matter
+- GFM 渲染：表格（窄表对齐网格/宽表卡片）、代码高亮(pygments)、任务列表、删除线、front matter
+- 文内锚点跳转（`#heading` 链接定位到对应块）
 - 单向同步滚动（编辑器 → 预览，块级近似）
 - 图片 base64 内嵌（本地即时、远程异步）
 - 点击预览里的外链用系统浏览器打开
@@ -23,8 +29,10 @@
 
 ## 使用
 
-- 打开任意 `.md` 文件，按 `ctrl+alt+m`（macOS：`super+ctrl+m`）开启/关闭预览。
+- 打开任意 `.md` 文件，按 `ctrl+alt+m`（macOS：`super+ctrl+m`）开启/关闭内嵌预览。
 - 预览视图为分栏右侧的只读视图；再次按快捷键或关掉预览 tab 即还原布局。
+- 按 `ctrl+alt+shift+m`（macOS：`super+ctrl+shift+m`）开启/关闭浏览器实时预览：
+  自动打开系统浏览器，编辑时自动刷新（SSE 推送），服务器只绑定 127.0.0.1、样式全内嵌、离线可用。
 
 ## 设置（`MarkdownInlinePreview.sublime-settings`）
 
@@ -56,7 +64,7 @@
 | 图表 mermaid | ✅ | ❌（同上） |
 | 预览内 Ctrl+F | ✅ | ❌（phantom 内容不进缓冲区） |
 | 反向同步滚动 | ✅ | ❌（phantom 不接收滚动事件） |
-| 浏览器预览 | ✅ | ❌（本插件定位就是内置预览） |
+| 浏览器预览 | ✅ | ✅（内置服务器实时模式，样式无限制） |
 
 ## 已知架构限制（minihtml 天花板）
 

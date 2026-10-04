@@ -1,3 +1,1 @@
-from .index import admon_plugin
-
-__all__ = ("admon_plugin",)
+from .index import admon_plugin  # noqa: F401

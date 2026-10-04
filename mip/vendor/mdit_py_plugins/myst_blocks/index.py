@@ -1,22 +1,11 @@
-from __future__ import annotations
-
-from collections.abc import Sequence
 import itertools
-from typing import TYPE_CHECKING
 
 from markdown_it import MarkdownIt
-from markdown_it.common.utils import escapeHtml
+from markdown_it.common.utils import escapeHtml, isSpace
 from markdown_it.rules_block import StateBlock
 
-from mdit_py_plugins.utils import is_code_block
 
-if TYPE_CHECKING:
-    from markdown_it.renderer import RendererProtocol
-    from markdown_it.token import Token
-    from markdown_it.utils import EnvType, OptionsDict
-
-
-def myst_block_plugin(md: MarkdownIt) -> None:
+def myst_block_plugin(md: MarkdownIt):
     """Parse MyST targets (``(name)=``), blockquotes (``% comment``) and block breaks (``+++``)."""
     md.block.ruler.before(
         "blockquote",
@@ -40,12 +29,13 @@ def myst_block_plugin(md: MarkdownIt) -> None:
     md.add_render_rule("myst_line_comment", render_myst_line_comment)
 
 
-def line_comment(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool:
-    if is_code_block(state, startLine):
-        return False
-
+def line_comment(state: StateBlock, startLine: int, endLine: int, silent: bool):
     pos = state.bMarks[startLine] + state.tShift[startLine]
     maximum = state.eMarks[startLine]
+
+    # if it's indented more than 3 spaces, it should be a code block
+    if state.sCount[startLine] - state.blkIndent >= 4:
+        return False
 
     if state.src[pos] != "%":
         return False
@@ -75,26 +65,27 @@ def line_comment(state: StateBlock, startLine: int, endLine: int, silent: bool) 
     return True
 
 
-def block_break(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool:
-    if is_code_block(state, startLine):
-        return False
-
+def block_break(state: StateBlock, startLine: int, endLine: int, silent: bool):
     pos = state.bMarks[startLine] + state.tShift[startLine]
     maximum = state.eMarks[startLine]
 
-    marker = state.src[pos]
+    # if it's indented more than 3 spaces, it should be a code block
+    if state.sCount[startLine] - state.blkIndent >= 4:
+        return False
+
+    marker = state.srcCharCode[pos]
     pos += 1
 
-    # Check block marker
-    if marker != "+":
+    # Check block marker /* + */
+    if marker != 0x2B:
         return False
 
     # markers can be mixed with spaces, but there should be at least 3 of them
 
     cnt = 1
     while pos < maximum:
-        ch = state.src[pos]
-        if ch != marker and ch not in ("\t", " "):
+        ch = state.srcCharCode[pos]
+        if ch != marker and not isSpace(ch):
             break
         if ch == marker:
             cnt += 1
@@ -112,17 +103,18 @@ def block_break(state: StateBlock, startLine: int, endLine: int, silent: bool) -
     token.attrSet("class", "myst-block")
     token.content = state.src[pos:maximum].strip()
     token.map = [startLine, state.line]
-    token.markup = marker * cnt
+    token.markup = chr(marker) * cnt
 
     return True
 
 
-def target(state: StateBlock, startLine: int, endLine: int, silent: bool) -> bool:
-    if is_code_block(state, startLine):
-        return False
-
+def target(state: StateBlock, startLine: int, endLine: int, silent: bool):
     pos = state.bMarks[startLine] + state.tShift[startLine]
     maximum = state.eMarks[startLine]
+
+    # if it's indented more than 3 spaces, it should be a code block
+    if state.sCount[startLine] - state.blkIndent >= 4:
+        return False
 
     text = state.src[pos:maximum].strip()
     if not text.startswith("("):
@@ -145,26 +137,14 @@ def target(state: StateBlock, startLine: int, endLine: int, silent: bool) -> boo
     return True
 
 
-def render_myst_target(
-    self: RendererProtocol,
-    tokens: Sequence[Token],
-    idx: int,
-    options: OptionsDict,
-    env: EnvType,
-) -> str:
+def render_myst_target(self, tokens, idx, options, env):
     label = tokens[idx].content
     class_name = "myst-target"
     target = f'<a href="#{label}">({label})=</a>'
     return f'<div class="{class_name}">{target}</div>'
 
 
-def render_myst_line_comment(
-    self: RendererProtocol,
-    tokens: Sequence[Token],
-    idx: int,
-    options: OptionsDict,
-    env: EnvType,
-) -> str:
+def render_myst_line_comment(self, tokens, idx, options, env):
     # Strip leading whitespace from all lines
     content = "\n".join(line.lstrip() for line in tokens[idx].content.split("\n"))
     return f"<!-- {escapeHtml(content)} -->"

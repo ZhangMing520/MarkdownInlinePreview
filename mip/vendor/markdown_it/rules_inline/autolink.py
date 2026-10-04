@@ -4,7 +4,7 @@ import re
 from .state_inline import StateInline
 
 EMAIL_RE = re.compile(
-    r"^([a-zA-Z0-9.!#$%&\'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)$"
+    r"^([a-zA-Z0-9.!#$%&\'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)$"  # noqa: E501
 )
 AUTOLINK_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]{1,31}):([^<>\x00-\x20]*)$")
 
@@ -12,7 +12,7 @@ AUTOLINK_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]{1,31}):([^<>\x00-\x20]*)$")
 def autolink(state: StateInline, silent: bool) -> bool:
     pos = state.pos
 
-    if state.src[pos] != "<":
+    if state.srcCharCode[pos] != 0x3C:  # /* < */
         return False
 
     start = state.pos
@@ -23,11 +23,11 @@ def autolink(state: StateInline, silent: bool) -> bool:
         if pos >= maximum:
             return False
 
-        ch = state.src[pos]
+        ch = state.srcCharCode[pos]
 
-        if ch == "<":
+        if ch == 0x3C:  # /* < */
             return False
-        if ch == ">":
+        if ch == 0x3E:  # /* > */
             break
 
     url = state.src[start + 1 : pos]

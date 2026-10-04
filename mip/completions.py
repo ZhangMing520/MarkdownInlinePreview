@@ -9,7 +9,7 @@ import os
 import sublime
 import sublime_plugin
 
-from .preview import PREVIEW_SETTINGS_KEY
+from .preview import is_preview_view
 
 
 def _is_markdown(view):
@@ -27,7 +27,7 @@ def _in_link_path_context(view, loc):
 
 class MipPathCompletion(sublime_plugin.EventListener):
     def on_query_completions(self, view, prefix, locations):
-        if view.settings().get(PREVIEW_SETTINGS_KEY, False):
+        if is_preview_view(view):
             return None
         if not _is_markdown(view) or view.file_name() is None:
             return None

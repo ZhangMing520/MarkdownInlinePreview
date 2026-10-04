@@ -1,12 +1,11 @@
 __all__ = (
     "StateCore",
+    "normalize",
     "block",
     "inline",
-    "linkify",
-    "normalize",
     "replace",
     "smartquotes",
-    "text_join",
+    "linkify",
 )
 
 from .block import block
@@ -16,4 +15,3 @@ from .normalize import normalize
 from .replacements import replace
 from .smartquotes import smartquotes
 from .state_core import StateCore
-from .text_join import text_join

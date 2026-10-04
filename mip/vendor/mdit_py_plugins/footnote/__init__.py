@@ -1,3 +1,1 @@
-from .index import footnote_plugin
-
-__all__ = ("footnote_plugin",)
+from .index import footnote_plugin  # noqa: F401

@@ -21,7 +21,6 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import codecs
-from collections.abc import Callable
 import re
 
 REGEX_SEPARATORS = re.compile(r"[\x2E\u3002\uFF0E\uFF61]")
@@ -33,10 +32,10 @@ def encode(uni: str) -> str:
 
 
 def decode(ascii: str) -> str:
-    return codecs.decode(ascii, encoding="punycode")  # type: ignore
+    return codecs.decode(ascii, encoding="punycode")  # type: ignore[call-overload]
 
 
-def map_domain(string: str, fn: Callable[[str], str]) -> str:
+def map_domain(string, fn):
     parts = string.split("@")
     result = ""
     if len(parts) > 1:

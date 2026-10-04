@@ -7,10 +7,8 @@ primarily in that it allows HTML and does not enable components:
 - inline: strikethrough
 """
 
-from ..utils import PresetType
 
-
-def make() -> PresetType:
+def make():
     return {
         "options": {
             "maxNesting": 20,  # Internal protection, recursion limit
@@ -41,7 +39,7 @@ def make() -> PresetType:
             "highlight": None,
         },
         "components": {
-            "core": {"rules": ["normalize", "block", "inline", "text_join"]},
+            "core": {"rules": ["normalize", "block", "inline"]},
             "block": {
                 "rules": [
                     "blockquote",
@@ -69,7 +67,7 @@ def make() -> PresetType:
                     "newline",
                     "text",
                 ],
-                "rules2": ["balance_pairs", "emphasis", "fragments_join"],
+                "rules2": ["balance_pairs", "emphasis", "text_collapse"],
             },
         },
     }

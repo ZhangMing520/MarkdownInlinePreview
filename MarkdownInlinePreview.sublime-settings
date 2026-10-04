@@ -2,22 +2,29 @@
     // 渲染引擎："python-markdown"（默认）| "markdown-it-py"（v0.2 起可选）
     "engine": "python-markdown",
 
-    // 传给 python-markdown 的扩展开关（GFM 表格/代码块/严谨列表/属性/list 内 html）
-    // codehilite 借助 pygments 做代码高亮（依赖已声明）
-    // 注意：tables 覆盖 GFM 表格；但任务列表(- [ ])与删除线(~~x~~)默认扩展不支持，
-    // 需额外扩展（手写极小扩展或 vendor pymdown-extensions 子集，见 plan.md 依赖策略）
+    // 传给 python-markdown 的扩展开关
+    // - tables/fenced_code/sane_lists/attr_list/md_in_html：GFM 表格/围栏代码块/严谨列表/属性/list 内 html
+    // - codehilite：pygments 代码高亮（依赖已声明）
+    // - toc：给标题生成 id（预览内点 #锚点 链接跳转依赖它）
+    // - pymdownx.tasklist / pymdownx.tilde：vendored pymdownx 子集，补任务列表(- [ ])与删除线(~~x~~)
     "extensions": [
         "tables",
         "fenced_code",
         "sane_lists",
         "attr_list",
         "md_in_html",
-        "codehilite"
+        "codehilite",
+        "toc",
+        "pymdownx.tasklist",
+        "pymdownx.tilde"
     ],
 
     // 刷新防抖毫秒数
     "refresh_delay_ms": 300,
 
     // 光标移动时同步滚动预览
-    "sync_scroll": true
+    "sync_scroll": true,
+
+    // 浏览器实时预览：启用 KaTeX 数学公式与 mermaid 图（JS 已 vendor 进包，离线可用）
+    "browser_extras": true
 }

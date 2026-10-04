@@ -1,26 +1,19 @@
-from collections.abc import Sequence
 import re
-from typing import TYPE_CHECKING
 
 from markdown_it import MarkdownIt
 from markdown_it.common.utils import escapeHtml
 from markdown_it.rules_inline import StateInline
 
-if TYPE_CHECKING:
-    from markdown_it.renderer import RendererProtocol
-    from markdown_it.token import Token
-    from markdown_it.utils import EnvType, OptionsDict
-
 VALID_NAME_PATTERN = re.compile(r"^\{([a-zA-Z0-9\_\-\+\:]+)\}")
 
 
-def myst_role_plugin(md: MarkdownIt) -> None:
+def myst_role_plugin(md: MarkdownIt):
     """Parse ``{role-name}`content```"""
     md.inline.ruler.before("backticks", "myst_role", myst_role)
     md.add_render_rule("myst_role", render_myst_role)
 
 
-def myst_role(state: StateInline, silent: bool) -> bool:
+def myst_role(state: StateInline, silent: bool):
     # check name
     match = VALID_NAME_PATTERN.match(state.src[state.pos :])
     if not match:
@@ -29,7 +22,7 @@ def myst_role(state: StateInline, silent: bool) -> bool:
 
     # check for starting backslash escape
     try:
-        if state.src[state.pos - 1] == "\\":
+        if state.srcCharCode[state.pos - 1] == 0x5C:  # /* \ */
             # escaped (this could be improved in the case of edge case '\\{')
             return False
     except IndexError:
@@ -63,13 +56,7 @@ def myst_role(state: StateInline, silent: bool) -> bool:
     return True
 
 
-def render_myst_role(
-    self: "RendererProtocol",
-    tokens: Sequence["Token"],
-    idx: int,
-    options: "OptionsDict",
-    env: "EnvType",
-) -> str:
+def render_myst_role(self, tokens, idx, options, env):
     token = tokens[idx]
     name = token.meta.get("name", "unknown")
     return f'<code class="myst role">{{{name}}}[{escapeHtml(token.content)}]</code>'
