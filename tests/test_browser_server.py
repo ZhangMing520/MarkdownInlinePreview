@@ -214,3 +214,16 @@ def test_static_route_http(server):
     resp, conn = _get(server.base_url, "/static/../mip/__init__.py")
     assert resp.status == 404
     conn.close()
+
+
+def test_page_title_named_and_pushed(server):
+    server.set_page("d1", "<p>1</p>", title="Preview README.md")
+    resp, conn = _get(server.base_url, "/d1")
+    assert "<title>Preview README.md</title>" in resp.read().decode()
+    conn.close()
+    # 标题变化经 "t" 帧推送（document.title 直接赋值，无需重发整页）
+    conn, read_event = _open_sse(server, "d1")
+    assert "h" in read_event()  # 注册即补推快照
+    server.set_page("d1", "<p>2</p>", title="Preview CHANGELOG.md")
+    assert read_event()["t"] == "Preview CHANGELOG.md"
+    conn.close()

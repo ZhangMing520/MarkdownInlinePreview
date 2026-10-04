@@ -30,7 +30,9 @@ class MipSourceListener(sublime_plugin.ViewEventListener):
         if window is None:
             return ()
         wid = window.id()
-        return tuple(m for m in (preview_mod.get_manager(wid), browser_mod.get_manager(wid)) if m)
+        # 浏览器预览按源视图 id 注册，直查即得，无需扫全窗口
+        return tuple(m for m in (preview_mod.get_manager(wid),
+                                 browser_mod.manager_for_source(wid, self.view)) if m)
 
     def on_modified_async(self):
         for mgr in self._managers():
@@ -46,16 +48,15 @@ class MipSourceListener(sublime_plugin.ViewEventListener):
 
 
 class MipCloseListener(sublime_plugin.EventListener):
-    """全局 on_close：源视图关闭 → 关两种预览；预览视图被手动关闭 → 还原布局。"""
+    """全局关闭清理：源视图关闭 → 关两种预览；预览视图被手动关闭 → 还原布局；
+    窗口关闭 → 兜底注销其全部预览管理器。"""
 
     def on_close(self, view):
         window = view.window()
         if window is None:
             return
-        # 源视图关闭 → 停止浏览器实时预览（浏览器标签页保留最后内容）
-        bmgr = browser_mod.get_manager(window.id())
-        if bmgr is not None and bmgr.is_source(view):
-            browser_mod.forget_manager(window.id())
+        # 源视图关闭 → 停止该文件的浏览器实时预览（浏览器标签页保留最后内容）
+        browser_mod.forget_source(window.id(), view)
         mgr = preview_mod.get_manager(window.id())
         if mgr is None:
             return
@@ -68,3 +69,9 @@ class MipCloseListener(sublime_plugin.EventListener):
         elif mgr.is_source(view):
             # 源视图关闭 → 关预览并还原布局
             mgr.close()
+
+    def on_window_close(self, window):
+        # 关窗兜底：on_close 逐视图触发不可依赖（触发时 window() 可能已为 None 早退），
+        # 按视图注册的浏览器预览若不整体注销会成批泄漏 manager + 服务器文档
+        browser_mod.forget_window(window.id())
+        preview_mod.forget_manager(window.id())

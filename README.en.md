@@ -43,6 +43,9 @@ Or for development: symlink this directory into `Packages/MarkdownInlinePreview`
 - Press `ctrl+alt+shift+m` (macOS: `super+ctrl+shift+m`) to toggle the live browser preview:
   your default browser opens automatically and refreshes as you type (via SSE). The server
   binds to 127.0.0.1 only, all styles are inlined, and it works offline.
+- Browser previews are **per file**: you can open previews for several files at once in the
+  same window (each with its own URL and browser tab), and the shortcut closes only the
+  preview of the file currently in focus.
 
 ## Settings (`MarkdownInlinePreview.sublime-settings`)
 

@@ -141,6 +141,7 @@ $extras_js
   var es = new EventSource(location.pathname.replace(/\\/+$$/, "") + "/events");
   es.onmessage = function (ev) {
     var msg = JSON.parse(ev.data);
+    if (msg.t !== undefined) { document.title = msg.t; }
     if (msg.h !== undefined) { el.innerHTML = msg.h; refresh(); }
     if (msg.s !== undefined) {
       window.scrollTo(0, (document.documentElement.scrollHeight - window.innerHeight) * msg.s);
@@ -279,7 +280,7 @@ def _sse_frame(key: str, value) -> bytes:
 
 
 class _Client:
-    """一个 SSE 连接的待发送帧：按键（"h"/"s"）各占一个槽位、后写覆盖先写。
+    """一个 SSE 连接的待发送帧：按键（"h"/"s"/"t"）各占一个槽位、后写覆盖先写。
 
     不用单一 maxsize=1 队列：那样高频的滚动推送会挤掉尚未发出的 HTML 快照，
     反之亦然；分槽后两类更新互不丢失。close() 唤醒阻塞中的连接（shutdown 用）。
@@ -316,13 +317,17 @@ class _Client:
             self.cond.notify_all()
 
 
+DEFAULT_PAGE_TITLE = "Markdown Preview"
+
+
 class _Doc:
-    __slots__ = ("body", "code_css", "extras", "clients", "lock")
+    __slots__ = ("body", "code_css", "extras", "title", "clients", "lock")
 
     def __init__(self):
         self.body = ""
         self.code_css = ""
         self.extras = False
+        self.title = DEFAULT_PAGE_TITLE
         self.clients = set()
         # body 赋值与 clients 快照共用此锁：新连接注册时补推的快照不会比
         # 并发 update 推的旧，二者不会乱序
@@ -330,17 +335,27 @@ class _Doc:
 
     def snapshot_page(self):
         with self.lock:
-            return build_page("Markdown Preview", self.body, self.code_css, extras=self.extras)
+            return build_page(self.title, self.body, self.code_css, extras=self.extras)
 
-    def update(self, body_html, code_css, extras):
-        """更新正文并广播（单临界区：赋值与推送原子发生）。"""
+    def update(self, body_html, code_css, extras, title=None):
+        """更新正文并广播（单临界区：赋值与推送原子发生）。
+
+        标题变化随 "t" 帧推送（浏览器端 document.title 直接赋值），
+        避免为改个标题重发整页。
+        """
 
         frame = _sse_frame("h", body_html)
         with self.lock:
+            title_frame = None
+            if title is not None and title != self.title:
+                self.title = title
+                title_frame = _sse_frame("t", title)
             self.body = body_html
             self.code_css = code_css
             self.extras = extras
             for c in self.clients:
+                if title_frame is not None:
+                    c.offer("t", title_frame)
                 c.offer("h", frame)
 
     def scroll(self, ratio):
@@ -494,15 +509,18 @@ class LiveServer:
             self._thread.start()
             logger.info("MarkdownInlinePreview: 浏览器预览服务器已启动 %s", self.base_url)
 
-    def set_page(self, doc_id: str, body_html: str, code_css: str = None, extras: bool = False):
+    def set_page(self, doc_id: str, body_html: str, code_css: str = None,
+                 extras: bool = False, title: str = None):
         """更新文档正文并推送给已连接的客户端（SSE 只传正文，不传整页）。
 
         code_css 缺省时用 pygments 样式（高亮是页面组装侧的事，调用方不必关心）。
+        title 命名页面标签（VS Code 惯例 "Preview <文件名>"），变化经 "t" 帧推送。
         """
 
         with self._lock:
             doc = self.docs.setdefault(doc_id, _Doc())
-        doc.update(body_html, pygments_css() if code_css is None else code_css, extras)
+        doc.update(body_html, pygments_css() if code_css is None else code_css,
+                   extras, title=title)
 
     def push_scroll(self, doc_id: str, ratio: float):
         doc = self.docs.get(doc_id)
