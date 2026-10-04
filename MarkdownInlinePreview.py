@@ -9,13 +9,13 @@ if __package__:
     # 把命令/监听器类显式带进根模块命名空间：Sublime 主要扫描被直接加载的插件
     # 模块（本文件）的 dir() 来发现命令类；子模块里的类即便已定义，若没出现在
     # 这里也可能不被注册。显式导入后命令面板/快捷键/监听器都能正常工作。
-    from .mip.preview import MipTogglePreviewCommand
+    from .mip.preview import MipTogglePreviewCommand, MipSetTextCommand
     from .mip.browser import MipToggleBrowserPreviewCommand
     from .mip.listener import MipSourceListener, MipCloseListener
     from .mip.completions import MipPasteUrlAsLinkCommand
 else:
     from mip import browser, preview, settings, completions
-    from mip.preview import MipTogglePreviewCommand
+    from mip.preview import MipTogglePreviewCommand, MipSetTextCommand
     from mip.browser import MipToggleBrowserPreviewCommand
     from mip.listener import MipSourceListener, MipCloseListener
     from mip.completions import MipPasteUrlAsLinkCommand

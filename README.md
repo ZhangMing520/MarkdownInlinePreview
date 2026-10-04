@@ -10,7 +10,8 @@
 
 **两种预览模式**（互补）：
 
-- **内嵌预览**（`ctrl+alt+m`）：同窗口分栏，编辑器内 phantom 渲染，边写边看，不切窗口
+- **内嵌预览**（`ctrl+alt+m`）：同窗口分栏，编辑器内 phantom 渲染，边写边看，不切窗口；
+  右栏支持多标签——同窗口可同时开多个文件的预览，左栏切文件右栏自动跟随
 - **浏览器实时预览**（`ctrl+alt+shift+m`）：内置本地服务器 + SSE 推送，浏览器原生渲染，
   完整 GitHub 样式、原生表格/复选框；**KaTeX 数学公式与 mermaid 图**已 vendor 进包（离线可用，
   `browser_extras` 设置可关）
@@ -32,7 +33,10 @@
 ## 使用
 
 - 打开任意 `.md` 文件，按 `ctrl+alt+m`（macOS：`super+ctrl+m`）开启/关闭内嵌预览。
-- 预览视图为分栏右侧的只读视图；再次按快捷键或关掉预览 tab 即还原布局。
+- 内嵌预览**按文件生效**：对多个文件分别按快捷键，右栏会各开一个 `Preview <文件名>` 标签页
+  （布局只在首个预览时切两栏，关掉最后一个预览才还原）；左栏切换源文件标签时，右栏自动切到
+  对应预览（`preview_tab_follows_source` 可关）。对同一文件再按一次只关它的预览。
+- 预览视图为分栏右侧的只读视图；手动关掉预览 tab 也会摘除对应预览。
 - 按 `ctrl+alt+shift+m`（macOS：`super+ctrl+shift+m`）开启/关闭浏览器实时预览：
   自动打开系统浏览器，编辑时自动刷新（SSE 推送），服务器只绑定 127.0.0.1、样式全内嵌、离线可用。
 - 浏览器预览**按文件生效**：同窗口可同时开多个文件的预览（各有独立 URL 与浏览器标签页），
@@ -46,6 +50,7 @@
 | `extensions` | tables/fenced_code/sane_lists/attr_list/md_in_html/codehilite | python-markdown 扩展开关 |
 | `refresh_delay_ms` | 300 | 防抖毫秒 |
 | `sync_scroll` | true | 编辑器→预览同步滚动 |
+| `preview_tab_follows_source` | true | 左栏切源文件时右栏自动切到对应预览标签 |
 
 ## 引擎
 

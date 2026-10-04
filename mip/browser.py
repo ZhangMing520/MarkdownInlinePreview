@@ -6,7 +6,6 @@
 """
 
 import logging
-import os
 import threading
 import webbrowser
 
@@ -126,9 +125,7 @@ class BrowserManager:
         except Exception:
             logger.exception("MarkdownInlinePreview: 浏览器预览渲染失败，保持旧页面")
             return
-        # VS Code 惯例命名 "Preview <文件名>"；未保存文件取缓冲区显示名（可被用户改）
-        name = self.source.file_name() or self.source.name()
-        title = "Preview " + (os.path.basename(name) if name else "未命名")
+        title = preview_mod.preview_title(self.source)
         get_server().set_page(self.doc_id, body, extras=cfg.get("browser_extras", True), title=title)
 
     def sync_scroll(self, source):

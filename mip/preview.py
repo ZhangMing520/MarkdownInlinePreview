@@ -51,6 +51,31 @@ def cursor_ratio(view):
     return row / (last_row + 1)
 
 
+def target_block(ratio, blocks):
+    """光标比例（0~1）→ 预览块序号（0..blocks-1）。"""
+
+    return min(int(ratio * blocks), blocks - 1)
+
+
+def proportional_y(target, blocks, max_y):
+    """块序号 → 按比例的布局 y 坐标（块高等高假设，块级近似的兜底映射）。"""
+
+    if blocks <= 1:
+        return 0.0
+    return max_y * target / (blocks - 1)
+
+
+def preview_title(source):
+    """预览标题（VS Code 惯例 "Preview <文件名>"），内嵌标签页与浏览器页面共用。
+
+    未落盘文件取缓冲区显示名（View.name()，可被用户改），避免多个预览/标签都显示
+    "未命名" 或 scratch 默认的 "untitled" 而无法区分。
+    """
+
+    name = source.file_name() or source.name()
+    return "Preview " + (os.path.basename(name) if name else "未命名")
+
+
 def schedule_debounced(holder, delay_ms, render):
     """代际防抖：sublime.set_timeout 无法取消，旧 timer 靠比对 holder._gen 自行失效。
 
@@ -71,46 +96,142 @@ def schedule_debounced(holder, delay_ms, render):
 # 块 HTML 里的元素 id（toc/anchors 扩展生成），供 #锚点 链接跳转定位块
 _ID_RE = re.compile(r"""\bid=["']([^"']+)["']""")
 
-# 每窗口维护一个预览管理器（plan：一个窗口只一个预览，绑定源视图）
+# 每窗口维护多个预览管理器：window_id → {source_view_id: PreviewManager}。
+# 与浏览器模式一致按源视图隔离——右栏（group 1）里每个源视图对应一个预览标签页，
+# 同一窗口可同时开任意多个；布局只在首个预览打开时切两栏、末个关闭时还原。
 _MANAGERS = {}
 
+# 窗口 → 打开首个预览前的原始布局/活动分栏（末个预览关闭时还原）
+_ORIG_LAYOUTS = {}
 
-# listener.py / settings.py 通过这些函数访问管理器，不直接碰私有 dict
-def get_manager(window_id):
-    return _MANAGERS.get(window_id)
+# 预览恒在右栏（group 1）：切栏布局、开标签的 focus_group、标签跟随都以此为准
+PREVIEW_GROUP = 1
+
+_SPLIT_LAYOUT = {
+    "cols": [0.0, 0.5, 1.0],
+    "rows": [0.0, 1.0],
+    "cells": [[0, 0, 1, 1], [1, 0, 2, 1]],
+}
+
+# listener.py / settings.py / toggle 命令通过这些函数访问管理器，不直接碰私有 dict
+def get_managers(window_id):
+    """该窗口全部内嵌预览管理器。"""
+
+    return list(_MANAGERS.get(window_id, {}).values())
 
 
-def forget_manager(window_id):
-    _MANAGERS.pop(window_id, None)
+def manager_for_view(window_id, view):
+    """按源视图或预览视图反查管理器，没有则 None。"""
+
+    per_window = _MANAGERS.get(window_id)
+    if not per_window or view is None:
+        return None
+    # 注册表按源视图 id 建键，源视图 O(1) 直取；视图 id 全局唯一，
+    # 预览视图 id 不会撞键，故落空后再按预览视图线性反查
+    mgr = per_window.get(view.id())
+    if mgr is not None:
+        return mgr
+    for candidate in per_window.values():
+        if candidate.is_preview(view):
+            return candidate
+    return None
+
+
+def add_manager(window_id, source_id, mgr):
+    _MANAGERS.setdefault(window_id, {})[source_id] = mgr
+
+
+def remove_manager(window_id, source_id):
+    per_window = _MANAGERS.get(window_id)
+    if not per_window:
+        return None
+    mgr = per_window.pop(source_id, None)
+    if not per_window:
+        _MANAGERS.pop(window_id, None)
+    return mgr
 
 
 def each_manager():
-    return list(_MANAGERS.values())
+    return [mgr for per_window in _MANAGERS.values() for mgr in per_window.values()]
 
 
-class _MipSetTextCommand(sublime_plugin.TextCommand):
-    """内部命令：用 edit 重写预览视图文本（phantom 需要每块的占位行）。"""
+def forget_window(window_id):
+    _MANAGERS.pop(window_id, None)
+    _ORIG_LAYOUTS.pop(window_id, None)
+
+
+def ensure_split_layout(window):
+    """首个预览打开时保存原布局并切两栏；已有预览则不动布局。"""
+
+    wid = window.id()
+    if wid not in _ORIG_LAYOUTS:
+        _ORIG_LAYOUTS[wid] = (window.get_layout(), window.active_group())
+        window.set_layout(_SPLIT_LAYOUT)
+
+
+def restore_layout_if_last(window):
+    """该窗口已无预览时还原原始布局。"""
+
+    if _MANAGERS.get(window.id()):
+        return
+    saved = _ORIG_LAYOUTS.pop(window.id(), None)
+    if saved is None:
+        return
+    layout, group = saved
+    try:
+        window.set_layout(layout)
+        window.focus_group(group)
+    except Exception:
+        logger.exception("MarkdownInlinePreview: 还原窗口布局失败")
+
+
+def close_manager(mgr, close_view=True):
+    """统一关闭路径（toggle/源视图关闭/预览标签手动关闭共用）：
+
+    先从注册表摘除（视图关闭触发 on_close 时已查不到本 manager，避免重入），
+    再按需擦 phantom、关视图；窗口内一个预览都不剩时还原布局。
+    close_view=False 用于"预览标签本身正在关闭"的 on_close 路径（不能再 close 它）。
+    """
+
+    wid = mgr.window.id()
+    if mgr.source is not None:
+        remove_manager(wid, mgr.source.id())
+    if close_view and mgr.is_open():
+        mgr.erase_phantoms()
+        mgr.view.close()
+    mgr.view = None
+    restore_layout_if_last(mgr.window)
+
+
+class MipSetTextCommand(sublime_plugin.TextCommand):
+    """内部命令：用 edit 重写预览视图文本（phantom 需要每块的占位行）。
+
+    必须在根模块 MarkdownInlinePreview.py 显式导入，否则 Sublime 不注册、
+    run_command 静默空转，phantom 全挂点 0、同步滚动恒定位顶部
+    （详见 CHANGELOG 2026-10-04；tests/test_command_registration.py 钉死该耦合）。
+    """
 
     def run(self, edit, text):
         self.view.replace(edit, sublime.Region(0, self.view.size()), text)
 
 
 class PreviewManager:
-    def __init__(self, window):
+    def __init__(self, window, source):
         self.window = window
-        self.source = None
+        self.source = source
         self.view = None
-        self._orig_layout = None
-        self._orig_group = 0
         # 上次渲染的原始块列表：增量更新用它差分（phantom 数 = len，无需另存 key 列表），
         # 未变的块原地保留，避免全量重插的闪烁
         self._last_blocks = None
+        self._last_sync_target = None
         # 元素 id → 块序号，#锚点 跳转用
         self._anchors = {}
         # 防抖代际（schedule_debounced 用）
         self._gen = 0
         # sync_scroll 挂在每次光标移动上，持续性失败只记一次完整 traceback
         self._scroll_failed_logged = False
+        # 坐标不可用退回比例映射是异常信号（phantom 全挂点 0 即此形态），只告警一次
+        self._scroll_fallback_logged = False
 
     # -- 生命周期 ----------------------------------------------------------
 
@@ -124,26 +245,21 @@ class PreviewManager:
         return view is not None and self.view is not None and self.view.id() == view.id()
 
     def open(self):
-        source = self.window.active_view()
-        if source is None:
-            return
-        self.source = source
-        self._orig_layout = self.window.get_layout()
-        self._orig_group = self.window.active_group()
-
-        # 两栏布局
-        self.window.set_layout({
-            "cols": [0.0, 0.5, 1.0],
-            "rows": [0.0, 1.0],
-            "cells": [[0, 0, 1, 1], [1, 0, 2, 1]],
-        })
-        # 在右栏开空白预览视图
-        self.window.focus_group(1)
+        # 布局由窗口级协调：首个预览切两栏，其后只在右栏追加标签页
+        ensure_split_layout(self.window)
+        # 在右栏开空白预览视图（右栏已有预览时，new_file 自动成为新标签页）
+        self.window.focus_group(PREVIEW_GROUP)
         pv = self.window.new_file()
-        self.window.focus_view(source)
         self._configure_view(pv)
+        pv.set_name(preview_title(self.source))
         self.view = pv
+        # 还焦点给源视图（这次激活不会触发跟随：右栏前台已是对应预览，listener 有判定）
+        self.window.focus_view(self.source)
         self.render()
+
+    def close(self):
+        # 统一走模块级关闭路径（注销/关视图/末个还原布局）
+        close_manager(self)
 
     def _configure_view(self, pv):
         pv.set_scratch(True)                       # 关 tab 不弹保存
@@ -152,24 +268,6 @@ class PreviewManager:
         pv.set_syntax_file("Packages/Text/Plain text.tmLanguage")  # 专用隐藏 syntax
         pv.settings().set("line_numbers", False)
         pv.settings().set("gutter", False)
-
-    def close(self):
-        # 先注销 manager 再关视图：视图关闭会触发 listener 的 on_close，
-        # 此时 manager 已不在 _MANAGERS，避免重复还原/自引用
-        forget_manager(self.window.id())
-        if self.is_open():
-            self._erase_phantoms()
-            self.view.close()
-        self.view = None
-        self.restore_layout()
-
-    def restore_layout(self):
-        if self._orig_layout is not None:
-            try:
-                self.window.set_layout(self._orig_layout)
-                self.window.focus_group(self._orig_group)
-            except Exception:
-                logger.exception("MarkdownInlinePreview: 还原窗口布局失败")
 
     # -- 渲染（逐块 phantom）-----------------------------------------------
 
@@ -211,13 +309,15 @@ class PreviewManager:
         else:
             # 块数变化（或首次）：整版重写占位缓冲与全部 phantom
             self._update_anchors(blocks)
-            self._erase_phantoms()
+            self.erase_phantoms()
             view.set_read_only(False)
-            view.run_command("_mip_set_text", {"text": "\n" * max(len(blocks) - 1, 0)})
+            view.run_command("mip_set_text", {"text": "\n" * max(len(blocks) - 1, 0)})
             for i, blk in enumerate(blocks):
                 self._add_phantom(i, DEFAULT_STYLE + blk)
             view.set_read_only(True)
         self._last_blocks = blocks
+        # 块高度可能已变，作废跨块去重缓存：光标不动也要允许下次事件重新定位
+        self._last_sync_target = None
 
     def _add_phantom(self, i, content):
         # 每个 phantom 是独立 minihtml 文档，逐块前置样式（content 已含 DEFAULT_STYLE）
@@ -227,7 +327,7 @@ class PreviewManager:
         )
 
     def _erase_phantom(self, i):
-        self.view.erase_phantom("mip_block_%d" % i)
+        self.view.erase_phantoms("mip_block_%d" % i)
 
     def _update_anchors(self, blocks):
         anchors = {}
@@ -236,12 +336,12 @@ class PreviewManager:
                 anchors.setdefault(elem_id, i)
         self._anchors = anchors
 
-    def _erase_phantoms(self):
+    def erase_phantoms(self):
         if self.view is None:
             return
         # phantom 与 _last_blocks 一一对应（key 按序号生成），无需另存 key 列表
         for i in range(len(self._last_blocks or ())):
-            self.view.erase_phantom("mip_block_%d" % i)
+            self.view.erase_phantoms("mip_block_%d" % i)
 
     # -- 交互 --------------------------------------------------------------
 
@@ -258,36 +358,65 @@ class PreviewManager:
                 except Exception:
                     logger.exception("锚点跳转定位失败: #%s", href[1:])
 
+    # -- 同步滚动 ----------------------------------------------------------
+
     def sync_scroll(self, source):
-        # 块级近似对齐：源光标行按比例映射到预览对应块（非像素级）
+        # 块级近似对齐：源光标行按比例映射到预览块，再取该块占位行的真实布局坐标定位
+        # （坐标含此前各块 phantom 撑起的高度，非像素级但对应真实内容位置；plan v0.2）。
+        # 定位必须显式 animate=False：后台视图上动画不播放，旧代码在动画起点读回坐标再写回，
+        # 结果永远停在顶部（详见 CHANGELOG 2026-10-04）。
         if not self.is_open() or not source.sel():
             return
         blocks = len(self._last_blocks) or 1
-        target = min(int(cursor_ratio(source) * blocks), blocks - 1)
+        target = target_block(cursor_ratio(source), blocks)
+        if target == self._last_sync_target:
+            return  # 跨块才滚：同块内移动光标不重复定位
+        self._last_sync_target = target
+        self._scroll_to_block(target, blocks)
+
+    def _scroll_to_block(self, target, blocks):
+        # 宿主 API 调用全部进防护：本方法在 listener 的逐 manager 循环里跑，
+        # 未捕获异常会连带中断浏览器预览的同步滚动
         try:
-            self.view.show(self.view.line(target), True)
-        except Exception:
-            # 不能静默：sync_scroll 曾因 line_count 不存在静默坏掉数周（2026-10-04）。
-            # 本方法随每次光标移动触发：首次报完整 traceback，后续降为 debug。
-            if self._scroll_failed_logged:
-                logger.debug("同步滚动定位失败（target 块=%d）", target)
+            preview = self.view
+            max_y = max(0.0, float(preview.layout_extent()[1])
+                        - float(preview.viewport_extent()[1]))
+            line = preview.line(target)
+            raw_y = float(preview.text_to_layout(line.begin())[1]) if line else -1.0
+            # 正常路径：每块挂在自己的占位行，坐标即真实位置（含前块 phantom 撑高）。
+            # raw_y 不可用（≤0）时退化为按块序号比例映射；两分支结果恒 ≥0，无需再夹取。
+            if raw_y > 0.0:
+                y = min(raw_y, max_y)
             else:
+                if target > 0 and not self._scroll_fallback_logged:
+                    self._scroll_fallback_logged = True
+                    logger.warning("同步滚动坐标不可用（target 块=%d），退回比例映射；"
+                                   "若持续定位顶部，检查 mip_set_text 是否已注册", target)
+                y = proportional_y(target, blocks, max_y)
+            preview.set_viewport_position((0.0, y), False)
+        except Exception:
+            # 不能静默：本方法此前静默失效数周才被发现，首次完整 traceback、后续降 debug
+            if not self._scroll_failed_logged:
                 self._scroll_failed_logged = True
                 logger.exception("同步滚动定位失败（target 块=%d）", target)
+            else:
+                logger.debug("同步滚动定位失败（target 块=%d）", target)
 
 
 class MipTogglePreviewCommand(sublime_plugin.WindowCommand):
     def run(self):
+        source = self.window.active_view()
+        if source is None:
+            return
         wid = self.window.id()
-        mgr = get_manager(wid)
+        # toggle 语义按源视图：该文件的预览已开 → 只关它（最后一个时还原布局）；
+        # 没开 → 在右栏追加该文件的预览标签页，不影响其它已开预览
+        mgr = manager_for_view(wid, source)
         if mgr is not None and mgr.is_open():
-            same_source = mgr.is_source(self.window.active_view())
-            # 先关掉旧预览（含还原布局），避免切到别的文件后旧预览视图被孤立
             mgr.close()
-            if same_source:
-                return  # 同一源视图 → toggle 语义：关闭即止
-        mgr = PreviewManager(self.window)
-        _MANAGERS[wid] = mgr
+            return
+        mgr = PreviewManager(self.window, source)
+        add_manager(wid, source.id(), mgr)
         mgr.open()
 
 
@@ -304,9 +433,10 @@ def plugin_loaded():
 
 
 def plugin_unloaded():
-    for mgr in each_manager():
-        try:
-            mgr.restore_layout()
-        except Exception:
-            logger.exception("MarkdownInlinePreview: 卸载时还原布局失败")
+    # 先取管理器再清空注册表：清空后 restore_layout_if_last 的"窗口仍有预览"判定不拦，
+    # 同窗多管理器时首个即还原并弹出保存布局，其余为空操作（无需再去重）
+    managers = each_manager()
     _MANAGERS.clear()
+    for mgr in managers:
+        restore_layout_if_last(mgr.window)
+    _ORIG_LAYOUTS.clear()

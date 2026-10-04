@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+- **内嵌预览支持多文件多标签**：原"一窗口一个预览、切文件复用同一视图"改为按源视图隔离
+  （注册表 `window_id → {source_view_id: manager}`，与浏览器模式对齐）。对多个文件分别
+  `ctrl+alt+m`，右栏各开一个 `Preview <文件名>` 标签页，互不覆盖；布局状态机上移到窗口级
+  ——首个预览切两栏、末个关闭才还原。左栏切换源文件时右栏自动跟随切到对应预览标签
+  （`preview_tab_follows_source` 设置可关；跟随前先看右栏前台——已是对应预览就不
+  focus_view，避免点开预览/点回源视图时焦点被反复拉抢）。关源视图、手动关预览 tab、关窗、reload 四条关闭路径分别处理，
+  预览标签自身在 on_close 流程中不重复 close。
 - **表格渲染重写**：minihtml 无 width/flex/滚动，原 inline-block 网格列无法对齐且超宽被裁。
   现为：窄表 → 等宽字体 nbsp 补齐网格（精确对齐）；宽表 → 逐行卡片布局（永不裁切）。
 - **浏览器实时预览**（`ctrl+alt+shift+m`）：内置 127.0.0.1 HTTP 服务器 + SSE 推送，
@@ -34,8 +41,22 @@
 - **页面标签按文件命名**：VS Code 惯例 "Preview <文件名>"（如 "Preview README.md"），
   多个预览标签可区分；未保存文件取缓冲区显示名（View.name()，可被用户改）避免标签同名；
   标题变化经新增的 "t" 帧推送，无需重发整页。
+- **修复内嵌预览关闭崩溃**：调用了不存在的 View.erase_phantom（官方为复数
+  erase_phantoms(key)），关闭预览/toggle 时抛 AttributeError；已全库核对其余
+  Sublime API 调用无同类问题。
 - **修复同步滚动从未生效**：cursor_ratio 调用了不存在的 View.line_count()（官方 API 无此
   方法，任何宿主都会 AttributeError 且被静默吞掉），改用 rowcol(view.size()) 计算行数。
+- **修复内嵌同步滚动总跳到预览顶部**：真机 4215 MIPSYNC 探针逐层实锤的因果链——
+  根因是内部命令 `MipSetTextCommand`（原 `_MipSetTextCommand`）定义在 mip 子模块却未在
+  根模块 MarkdownInlinePreview.py 显式导入，Sublime 不注册该命令，`run_command` 静默空转：
+  预览缓冲的占位换行从未写入（size=0），29 个 phantom 全部挂在点 0（LAYOUT_BLOCK 视觉上
+  仍堆叠正常），于是 `show(锚点)` 永远滚到点 0=顶部、`text_to_layout` 对所有块恒返回 (0,0)。
+  叠加问题：`View.show()`/`set_viewport_position()` 的 animate 默认 True（见本机
+  Lib/python314/sublime.py），旧链路在后台视图发起动画后立刻读回动画起点（顶部）再写回。
+  现改为：命令类改名并在根模块注册（新增 AST 防回归测试，钉死"子模块命令类必须进根模块"）；
+  同步定位改为显式 `animate=False` 直写后台预览视口（真机 4215 验证精确落位、焦点切走不重置，
+  不抢焦点无闪烁），坐标取占位行 text_to_layout 真实布局值（含 phantom 高度），
+  布局未就绪时按块序号比例映射兜底；跨块才触发定位。
 - **修复 Python 3.14 宿主崩溃**：ST 4205+ 的 3.14 宿主向 ViewEventListener.is_applicable
   传 view.settings()（Settings 对象）而非 View，is_preview_view 改为双形态兼容
   （Build 4215 真机验证的崩溃点）。

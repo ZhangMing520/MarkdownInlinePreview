@@ -13,7 +13,8 @@ Published as a standalone Package Control package.
 **Two preview modes** (complementary):
 
 - **Inline preview** (`ctrl+alt+m`): rendered via in-editor phantoms in a split view of the
-  same window — edit and read side by side, no window switching
+  same window — edit and read side by side, no window switching; the right pane supports
+  multiple preview tabs, and follows the active source file automatically
 - **Live browser preview** (`ctrl+alt+shift+m`): built-in local server + SSE push, rendered
   natively by your browser — full GitHub styling, native tables/checkboxes; **KaTeX math and
   mermaid diagrams** are vendored into the package (works offline, can be disabled via the
@@ -38,8 +39,13 @@ Or for development: symlink this directory into `Packages/MarkdownInlinePreview`
 ## Usage
 
 - Open any `.md` file and press `ctrl+alt+m` (macOS: `super+ctrl+m`) to toggle the inline preview.
-- The preview is a read-only view in the right pane; press the shortcut again or close the
-  preview tab to restore the layout.
+- Inline previews are **per file**: pressing the shortcut on several files opens a
+  `Preview <name>` tab for each in the right pane (the layout splits only for the first one
+  and is restored when the last preview closes). Switching source tabs in the left pane
+  switches the right pane to the matching preview tab automatically
+  (`preview_tab_follows_source` can disable this). Pressing the shortcut on the same file
+  closes only that file's preview; closing a preview tab manually detaches it as well.
+- The preview is a read-only view in the right pane.
 - Press `ctrl+alt+shift+m` (macOS: `super+ctrl+shift+m`) to toggle the live browser preview:
   your default browser opens automatically and refreshes as you type (via SSE). The server
   binds to 127.0.0.1 only, all styles are inlined, and it works offline.
@@ -55,6 +61,7 @@ Or for development: symlink this directory into `Packages/MarkdownInlinePreview`
 | `extensions` | tables/fenced_code/sane_lists/attr_list/md_in_html/codehilite | python-markdown extension switches |
 | `refresh_delay_ms` | 300 | Debounce delay in milliseconds |
 | `sync_scroll` | true | Editor → preview scroll synchronization |
+| `preview_tab_follows_source` | true | Right pane follows the active source tab |
 
 ## Engines
 

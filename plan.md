@@ -126,11 +126,16 @@ MarkdownInlinePreview/
 
 - 预览视图属性：`set_scratch(True)`（关 tab 不弹保存）+ 只读（防在预览里打字）+ 关行号 + 专用隐藏 syntax；
   并打内部 tag（如 `settings.set("mip_preview", True)`）作为"关闭还原布局"时识别预览视图的标记，避免误伤普通视图。
-- 命令 `preview` 为 **toggle**：再次触发即关闭并还原布局；一个窗口只维护一个预览，绑定到源视图；
-  切换源视图时重渲染到同一预览（不新建）。否则"关闭还原布局"状态机写不清。
+- 命令 `preview` 为 **toggle**（按源视图）：对同一文件再次触发即关闭它的预览；
+  不同文件分别触发 → 右栏各开一个预览标签页（注册表 `window_id → {source_view_id: manager}`，
+  与浏览器模式一致）。布局状态机上移到窗口级：首个预览切两栏、**末个**预览关闭才还原布局。
+  （v0.1 曾为"一窗口一预览、切文件复用同一视图"，多标签需求下改为按源视图隔离。）
 - `listener.py` 监听：`on_modified_async`（防抖刷新，避免大文档卡 UI）、`on_selection_modified_async`
-  （同步滚动）、`on_close`（用户点 × 关预览 tab 时还原布局）；`plugin_loaded` 扫描并清理上次 reload
-  遗留的孤儿预览视图（开发期频繁 reload 必然产生）。
+  （同步滚动）、`on_activated_async`（左栏切源文件标签时右栏跟随切预览标签，可由
+  `preview_tab_follows_source` 关闭；右栏前台已是对应预览时不切换，还焦点给源视图的
+  那次激活也因此不会被拉回）、
+  `on_close`（关源视图→关其预览；手动关预览 tab→摘除；末个→还原布局）；
+  `plugin_loaded` 扫描并清理上次 reload 遗留的孤儿视图（开发期频繁 reload 必然产生）。
 
 ## 分期与验收
 

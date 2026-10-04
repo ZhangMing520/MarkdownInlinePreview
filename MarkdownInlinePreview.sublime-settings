@@ -26,6 +26,10 @@
     // 注意跟随的是光标而非滚轮：Sublime 未向插件暴露视图滚动事件，滚轮/拖滚动条不触发
     "sync_scroll": true,
 
+    // 内嵌预览多标签：左栏切换源文件标签时，右栏自动切到对应的预览标签。
+    // false 时右栏停在手动选择的预览标签上（各预览仍各自实时刷新）
+    "preview_tab_follows_source": true,
+
     // 浏览器实时预览：启用 KaTeX 数学公式与 mermaid 图（JS 已 vendor 进包，离线可用）
     "browser_extras": true
 }

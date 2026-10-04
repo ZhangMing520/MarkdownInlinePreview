@@ -60,3 +60,26 @@ def test_cursor_ratio_uses_rowcol_only(sublime_shim):
     assert preview_mod.cursor_ratio(view) == 0.5   # 第 6 行 / 共 10 行
     view = _FakeView(cursor_row=9, last_row=9)
     assert preview_mod.cursor_ratio(view) == 0.9   # 文档底（末行无换行）
+
+
+def test_target_block_maps_ratio_into_valid_range(sublime_shim):
+    # 比例 → 块序号：必须始终落在 0..blocks-1（ratio 接近 1 时不能越界）
+    import mip.preview as preview_mod
+    importlib.reload(preview_mod)
+
+    assert preview_mod.target_block(0.0, 29) == 0
+    assert preview_mod.target_block(0.86, 29) == 24
+    assert preview_mod.target_block(1.0, 29) == 28   # 末块，而非 29
+    assert preview_mod.target_block(0.5, 1) == 0     # 单块文档
+
+
+def test_proportional_y_linear_mapping_with_guard(sublime_shim):
+    # text_to_layout 不可用时的兜底：块序号线性映射到 [0, max_y]
+    import mip.preview as preview_mod
+    importlib.reload(preview_mod)
+
+    assert preview_mod.proportional_y(0, 29, 4005.0) == 0.0
+    assert preview_mod.proportional_y(28, 29, 4005.0) == 4005.0   # 末块到可滚动底
+    assert abs(preview_mod.proportional_y(14, 29, 4005.0)
+               - 4005.0 * 0.5) < 1e-9
+    assert preview_mod.proportional_y(0, 1, 100.0) == 0.0         # 单块文档防除零

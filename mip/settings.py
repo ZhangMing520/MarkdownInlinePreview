@@ -22,6 +22,8 @@ def get_settings():
         "refresh_delay_ms": s.get("refresh_delay_ms", 300),
         "sync_scroll": s.get("sync_scroll", True),
         "browser_extras": s.get("browser_extras", True),
+        # 行为开关，每次激活时直读，不参与变更重渲染
+        "preview_tab_follows_source": s.get("preview_tab_follows_source", True),
     }
 
 
