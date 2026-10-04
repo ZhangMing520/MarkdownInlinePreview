@@ -8,6 +8,48 @@ view.settings()（Settings 对象），旧宿主传 View 本身。2026-10-04 在
 import importlib
 
 
+def test_preview_view_compresses_placeholder_line_height(sublime_shim):
+    # 块间空隙来自空占位行的行盒高度（非 CSS margin）：预览视图必须设负行 padding
+    # 压缩空行，phantom 内容行由内容最小高度钳住不受影响。该设置被删则空隙回到 ~19px。
+    import mip.preview as preview_mod
+    importlib.reload(preview_mod)
+
+    class _Settings:
+        def __init__(self):
+            self._d = {}
+
+        def set(self, k, v):
+            self._d[k] = v
+
+        def get(self, k, default=None):
+            return self._d.get(k, default)
+
+    class _View:
+        def __init__(self):
+            self._s = _Settings()
+            self.syntax = None
+
+        def settings(self):
+            return self._s
+
+        def set_scratch(self, flag):
+            self.scratch = flag
+
+        def set_read_only(self, flag):
+            self.read_only = flag
+
+        def set_syntax_file(self, syntax):
+            self.syntax = syntax
+
+    mgr = preview_mod.PreviewManager.__new__(preview_mod.PreviewManager)
+    v = _View()
+    mgr._configure_view(v)
+    assert v._s.get("line_padding_top") is not None
+    assert v._s.get("line_padding_bottom") is not None
+    assert v._s.get("line_padding_top") < 0
+    assert v._s.get("line_padding_bottom") < 0
+
+
 def test_is_preview_view_accepts_settings_or_view(sublime_shim):
     import mip.preview as preview_mod
     importlib.reload(preview_mod)  # 重新绑定 shim 后的 sublime

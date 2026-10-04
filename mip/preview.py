@@ -21,6 +21,10 @@ logger = logging.getLogger("MarkdownInlinePreview")
 # 预览视图的内部标记（settings 里打这个 tag，用于识别预览视图、避免误伤普通视图）
 PREVIEW_SETTINGS_KEY = "mip_preview"
 
+# minihtml 的 white-space: pre-wrap 需要 Build 4170+（官方文档）；模块在主线程加载，
+# 此处一次性读 version，供后台渲染任务决定代码块走原生 <pre> 还是 div 降级
+_PRE_WRAP_SUPPORTED = int(sublime.version() or 0) >= 4170
+
 
 def is_preview_view(view):
     """是否 mip 打开的预览视图。内部 tag 的编码只在这一处，其他模块用它判断。
@@ -277,6 +281,13 @@ class PreviewManager:
         pv.set_syntax_file("Packages/Text/Plain text.tmLanguage")  # 专用隐藏 syntax
         pv.settings().set("line_numbers", False)
         pv.settings().set("gutter", False)
+        # 压缩块间空隙：每个块独占一个空行作为 phantom 锚点（见 _update_phantoms 的 "\n"
+        # 占位缓冲），空行默认行盒约 19px，是块间唯一的间距来源。负行 padding 只压得动
+        # 空锚点行——phantom 自身内容行盒会被内容最小高度钳住不受影响；同步滚动取
+        # text_to_layout 真实坐标，压缩后定位仍精确。-2px 为真机微调值（贴近 GitHub
+        # 16px 块距），若 Sublime 调整行盒算法在此一并改。
+        pv.settings().set("line_padding_top", -2)
+        pv.settings().set("line_padding_bottom", -2)
 
     # -- 渲染（逐块 phantom）-----------------------------------------------
 
@@ -300,7 +311,8 @@ class PreviewManager:
             engine, msg = get_engine(engine_name)
             if engine is None:
                 return None, msg
-            return render_html(text, cfg, engine, base_dir=base_dir), msg
+            return render_html(text, cfg, engine, base_dir=base_dir,
+                               pre_wrap=_PRE_WRAP_SUPPORTED), msg
 
         def _ok(payload):
             if gen != self._render_gen or not self.is_open():

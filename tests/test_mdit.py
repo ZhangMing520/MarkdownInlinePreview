@@ -1,7 +1,7 @@
 """markdown-it-py 引擎测试（vendor 在当前 Python 宿主可加载时才跑）。
 
 证明 v0.2 的 GFM 闭环：markdown-it-py 真能产出 <table>/<input>/<del>，
-交给 render.py 转换层后变成 minihtml 可显示的 div 网格 / [x] / line-through。
+交给 render.py 转换层后变成 minihtml 可显示的 div 网格 / [x] / U+0336 删除线。
 
 vendored 4.x 要求 Python 3.10+；旧宿主（如 ST 的 3.8）下导入会抛 SyntaxError
 或 TypeError（ABC 运行时下标），这些测试在该宿主整体 skip——降级路径本身由
@@ -44,4 +44,4 @@ def test_render_html_converts_gfm():
     out = render_html(md, {"engine": "markdown-it-py", "extensions": []}, MarkdownItEngine())
     assert "display:inline-block" in out   # table → div 网格
     assert "[x]" in out                    # 任务列表 → [x]
-    assert "line-through" in out           # 删除线 → line-through
+    assert "x\u0336" in out               # 删除线 → U+0336 逐字叠加

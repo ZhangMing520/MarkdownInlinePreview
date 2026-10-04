@@ -102,10 +102,15 @@ MarkdownInlinePreview/
 ### minihtml 适配要点（render.py）
 
 - **minihtml 标签转换层（核心，与引擎无关）**：minihtml 明确不支持 `<table>`/`<input>`/`<button>`/`<del>`
-  等标签（官方文档："Other HTML tags … are not implemented, e.g. `<input>`, `<button>`, `<table>`"）。
+  等标签（官方文档："Other HTML tags … are not implemented, e.g. `<input>`, `<button>`, `<table>`"；
+  受支持标签白名单里同样没有 `<pre>`——未知标签按普通块渲染、white-space 固定 normal，
+  代码块换行折叠缩进塌缩，Build 4170+ 用 CSS `pre-wrap` 救回，旧构建 convert_code_blocks
+  转每行一 div + nbsp）。
   引擎产出的这些必须在此转换——`<table>`→嵌套 `<div>`(display:inline-block + border)网格；
-  `<input type=checkbox>`→`[x]`/`[ ]` 文本或带样式的 span；`<del>`/`<s>`→`<span style="text-decoration:line-through">`
-  （`text-decoration` minihtml 支持）。这是 GFM 表格/任务列表/删除线能显示的唯一途径，**与选哪个引擎无关**。
+  `<input type=checkbox>`→`[x]`/`[ ]` 文本或带样式的 span；`<del>`/`<s>`→U+0336 逐字
+  叠加删除线（真机取证修正：minihtml 官方 `text-decoration` 仅支持 none/underline，
+  line-through 被静默丢弃，CSS 路线无效，只能用 COMBINING LONG STROKE OVERLAY 由
+  字体 shaping 划线）。这是 GFM 表格/任务列表/删除线/代码块能显示的唯一途径，**与选哪个引擎无关**。
 - 图片（本地/远程）→ base64 data URL 内嵌；远程图片线程池异步，加载完成后**合并(coalesce)再重渲染**，
   已内嵌图片走缓存不重复请求，避免多图互相触发整篇重渲染抖动。HTTP 客户端用标准库 `urllib`
   （零新增依赖，不引入 requests，否则 dependencies.json 还要加）。

@@ -1,6 +1,33 @@
 # Changelog
 
 ## Unreleased
+- **修复内嵌预览代码块换行折叠、缩进塌缩**：minihtml 受支持标签白名单不含
+  `<pre>`（官方文档取证），未知标签按普通块渲染且 white-space 固定 normal，
+  围栏代码块整段连成一片按宽度乱折行、缩进消失（真机截图确认；pygments 语法
+  着色仍在，故问题长期未被注意）。Build 4170+ 为 `pre` 显式加
+  `white-space: pre-wrap` 与等宽字体栈（长行可按词换行）；Build 4000-4169
+  （pre-wrap 不可用）由新增 convert_code_blocks 降级为每行一个官方支持的
+  `<div>`，缩进/对齐空白转 `&nbsp;`（覆盖 pygments `<span class="w">` 与
+  markdown-it-py 纯文本两种形态），空行 nbsp 占位，块首尾抑制换行按 CSS
+  模型处理。浏览器模式走原生 `<pre>` 不受影响。
+- **修复内嵌预览删除线从未显示的 bug**：`<del>/<s>` 旧实现转成
+  `<span style="text-decoration:line-through">`，但真机取证（官方文档 + 截图放大）
+  确认 minihtml 的 `text-decoration` 仅支持 none/underline，line-through 被静默丢弃，
+  `~~删除~~` 文本在内嵌模式一直显示为普通文本（旧测试只断言 HTML 字符串含该样式，
+  未覆盖真机渲染）。改为逐字叠加 U+0336（COMBINING LONG STROKE OVERLAY），由字体
+  shaping 划出删除线；正确跳过标签、连续空白，并把 HTML 实体作为整体处理。
+  浏览器模式走原生 `<del>` 不受影响。
+- **内嵌预览标题排版对齐浏览器模式（GitHub 风格）并修复间距过大**：内嵌模式每个
+  Markdown 块是挂在独立空占位行上的 LAYOUT_BLOCK phantom，占位行本身已贡献约一行高的
+  块间距，标题 CSS 又叠了 `margin: 0.6em 0 0.3em`，h1/h2 前后实际空出两三行（真机截图
+  实测 h2 前后合计 ~70px）。现按 browser_server 的 GITHUB_CSS 同数值翻译 minihtml 受支持
+  的部分：标题 margin 归零（间距由占位行统一提供）、字号 h1 2em/h2 1.5em/h3 1.25em、
+  bold、行高 1.25，h1/h2 加淡色下划线（前景色 18% 透明，跟随配色）。未直接复用同一份
+  CSS——minihtml 白名单不支持 @media/:nth-child/属性选择器/width/flex/overflow，
+  且表格/复选框/删除线已在转换层改写成 minihtml 结构。
+  剩余块间空隙来自空占位行的行盒高度（非 CSS margin）：预览视图另设
+  `line_padding_top/bottom = -2` 只压缩空锚点行（phantom 内容行被最小高度钳住不受影响，
+  同步滚动用真实布局坐标仍精确），块距贴近 GitHub 的 16px。
 - **markdown-it-py 引擎升级回 4.x**：vendored 副本 markdown-it-py 2.2.0 → **4.2.0**、
   mdit-py-plugins 0.3.5 → **0.6.1**、mdurl → **0.1.2**（早期为兼容 ST 旧 3.8 宿主降到 2.2.0）。
   4.x 要求 Python 3.10+，Build 4213+ 的 3.14 宿主现在吃到上游两年修复；旧构建（3.8 宿主）

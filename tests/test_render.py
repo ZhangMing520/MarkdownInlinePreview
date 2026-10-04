@@ -1,10 +1,12 @@
 import base64
 import os
+import re
 import tempfile
 
 from conftest import SETTINGS
 from mip.engines.py_md import PythonMarkdownEngine
 from mip.render import (
+    convert_code_blocks,
     convert_inputs,
     convert_strikethrough,
     convert_tables,
@@ -97,9 +99,56 @@ def test_convert_inputs():
     assert "[ ]" in convert_inputs('<input type="checkbox">')
 
 
+def test_convert_code_blocks_modern_passthrough():
+    # Build 4170+：原生 <pre> 保留，交给 CSS pre-wrap
+    html = "<pre>a\nb</pre>"
+    assert convert_code_blocks(html, True) == html
+
+
+def test_convert_code_blocks_legacy():
+    html = "<pre>def f():\n    return 1\n\nx = 2</pre>"
+    out = convert_code_blocks(html, False)
+    assert "<pre" not in out
+    assert 'class="mip-pre"' in out
+    assert out.count("<div>") == 4             # 4 个源码行（含 1 空行）各一个 div
+    assert "&nbsp;&nbsp;&nbsp;&nbsp;return 1" in out   # 缩进转 nbsp
+    assert "<div>&nbsp;</div>" in out          # 空行占位保行高
+    # pygments 把空白编码进 <span class="w">  </span>：同样转 nbsp
+    out2 = convert_code_blocks(
+        '<pre><span class="w">    </span><span class="k">if</span> x:\n</pre>', False
+    )
+    assert '<span class="w">&nbsp;&nbsp;&nbsp;&nbsp;</span>' in out2
+    # tab 按 4 空格展开
+    out3 = convert_code_blocks("<pre>\tx</pre>", False)
+    assert "&nbsp;&nbsp;&nbsp;&nbsp;x" in out3
+    # <pre> 闭标签前的单个换行（markdown-it 输出形态）按 HTML 规范忽略，不产生空行 div
+    out4 = convert_code_blocks("<pre>a\n</pre>", False)
+    assert out4.count("<div>") == 1 and "<div>&nbsp;</div>" not in out4
+    # pygments/mdit 实际形态：换行在 </code> 前
+    out5 = convert_code_blocks("<pre><code>a\n</code></pre>", False)
+    inner5 = re.findall(r"<div>.*?</div>", out5)
+    assert len(inner5) == 1 and "a</code>" in inner5[0]
+
+
+def test_render_html_code_block_legacy_end_to_end():
+    md = "```python\ndef f():\n    return 1\n```"
+    out = render_html(md, SETTINGS, PythonMarkdownEngine(), pre_wrap=False)
+    assert "<pre" not in out and "mip-pre" in out
+
+
 def test_convert_strikethrough():
     out = convert_strikethrough("<del>old</del>")
-    assert "line-through" in out and "old" in out and "<del" not in out
+    assert "<del" not in out
+    assert out == "o\u0336l\u0336d\u0336"   # 逐字叠加 U+0336
+    # 连续空白不叠（避免空格上出现多余划线/异常 shaping）
+    assert convert_strikethrough("<del>a b</del>") == "a\u0336 b\u0336"
+    # 行内标签保留，只对文本节点叠加
+    out = convert_strikethrough("<del>a <code>b</code></del>")
+    assert out == "a\u0336 <code>b\u0336</code>"
+    # HTML 实体作为一个整体，组合符加在实体之后（作用于解析出的字符）
+    assert convert_strikethrough("<del>&amp;x</del>") == "&amp;\u0336x\u0336"
+    # <s> 同义标签同样处理
+    assert convert_strikethrough("<s>y</s>") == "y\u0336"
 
 
 def test_inline_local_images():
@@ -146,7 +195,8 @@ def test_render_html_default_engine_gfm():
     md = "- [x] done\n\n~~gone~~"
     out = render_html(md, SETTINGS, PythonMarkdownEngine())
     assert "[x]" in out                       # checkbox → [x]
-    assert "line-through" in out and "gone" in out
+    assert "g\u0336o\u0336n\u0336e\u0336" in out   # 删除线 → U+0336 逐字叠加
+    assert "line-through" not in out         # 旧的无效 span 不再输出
     assert "<input" not in out and "<del" not in out
 
 

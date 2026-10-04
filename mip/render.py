@@ -6,7 +6,8 @@ render_html 在其后加 minihtml 适配，render_body 直接内嵌图片给浏�
 minihtml 是 HTML 子集，明确不支持 <table>/<input>/<button>/<del> 等标签，
 且没有 width/百分比/flexbox/overflow 滚动（官方 minihtml 文档已核实），
 所以适配层做三件事：
-  1. 标签转换层：table→等宽字体网格或卡片、input→[x]/[ ]、del/s→line-through（与引擎无关）
+  1. 标签转换层：table→等宽字体网格或卡片、input→[x]/[ ]、
+     del/s→U+0336 组合删除线、pre→pre-wrap(4170+)或逐行 div(旧构建)（与引擎无关）
   2. 图片 base64 内嵌（仅本地图片同步内嵌；远程 http/https/data 原样保留）
   3. <style> 样式块（DEFAULT_STYLE）+ 按顶层块分片；样式由 preview.py 在
      插入每个 phantom 时前置（phantom 是独立 minihtml 文档，必须各自带样式）
@@ -38,6 +39,17 @@ _CELL_RE = re.compile(r"<t([hd])[^>]*>(.*?)</t\1>", re.S | re.I)
 _INNER_TAG_RE = re.compile(r"<[^>]+>")
 _INPUT_RE = re.compile(r"<input[^>]*type=[\"']?checkbox[\"']?[^>]*>", re.S | re.I)
 _DEL_RE = re.compile(r"<(del|s)(?=[\s>/])[^>]*>(.*?)</\1>", re.S | re.I)
+_PRE_RE = re.compile(r"(<pre[^>]*>)(.*?)(</pre>)", re.S | re.I)
+# 标签之间的纯空白文本（pygments 把缩进/对齐空白编码为 <span class="w">  </span>）
+_PRE_WS_BETWEEN_TAGS_RE = re.compile(r"(>)([ \t]+)(?=<)")
+_PRE_LEADING_WS_RE = re.compile(r"^[ \t]+")
+# U+0336 COMBINING LONG STROKE OVERLAY：minihtml 官方仅支持 text-decoration
+# none/underline，line-through 被静默丢弃，删除线只能逐字叠加组合字符实现
+_STRIKE_MARK = "\u0336"
+# del/s 内层切词：标签 | 数字/十六进制/命名实体 | 连续空白 | 其余单字符
+_STRIKE_TOKEN_RE = re.compile(
+    r"<[^>]+>|&#\d+;|&#x[0-9a-fA-F]+;|&[a-zA-Z][a-zA-Z0-9]+;|\s+|[^\s<]"
+)
 # 宽度不可测的单元格内容：img 按自身尺寸渲染（alt 不计宽），块级标签自带换行，
 # 两者都会破坏 nbsp 补齐的列对齐 → 整表放弃网格
 _RICH_CELL_RE = re.compile(r"<(img|p|div|ul|ol|li|pre|blockquote)(?=[\s>/])", re.I)
@@ -185,10 +197,76 @@ def convert_inputs(html: str) -> str:
     return _INPUT_RE.sub(repl, html)
 
 
-def convert_strikethrough(html: str) -> str:
-    """<del>/<s> → <span style="text-decoration:line-through">（minihtml 不支持 del）。"""
+def _strike_text(inner: str) -> str:
+    """del/s 内层 HTML → 每个可见字符后叠 U+0336（实体作为一个整体，
+    组合符作用于实体解析后的字符；标签与连续空白原样保留）。"""
 
-    return _DEL_RE.sub(r'<span style="text-decoration:line-through;">\2</span>', html)
+    out = []
+    for tok in _STRIKE_TOKEN_RE.findall(inner):
+        out.append(tok)
+        if tok[0] != "<" and not tok[0].isspace():
+            out.append(_STRIKE_MARK)
+    return "".join(out)
+
+
+def convert_strikethrough(html: str) -> str:
+    """<del>/<s> → U+0336 逐字删除线。
+
+    minihtml 官方 text-decoration 仅支持 none/underline，line-through 会被
+    静默丢弃（旧实现输出的 span 在真机上无任何删除线效果）；改用组合字符
+    U+0336（COMBINING LONG STROKE OVERLAY）逐字叠加，由字体 shaping 划线。
+    del/s 内层若含行内标签（code/strong 等）或 HTML 实体也能正确处理。
+    """
+
+    return _DEL_RE.sub(lambda m: _strike_text(m.group(2)), html)
+
+
+def _legacy_pre_line(line: str) -> str:
+    """旧构建降级：一行代码 HTML 中的缩进/对齐空白转 &nbsp;（normal 空白会被折叠）。"""
+
+    # pygments：空白整段在 <span class="w">  </span> 里（标签之间的纯空白文本节点）
+    line = _PRE_WS_BETWEEN_TAGS_RE.sub(
+        lambda m: m.group(1) + "&nbsp;" * len(m.group(2).expandtabs(4)), line
+    )
+    # markdown-it-py：围栏块无高亮，缩进是行首裸文本
+    m = _PRE_LEADING_WS_RE.match(line)
+    if m:
+        line = "&nbsp;" * len(m.group(0).expandtabs(4)) + line[m.end():]
+    return line
+
+
+def convert_code_blocks(html: str, pre_wrap: bool = True) -> str:
+    """<pre> 代码块适配 minihtml（minihtml 受支持标签白名单不含 <pre>）。
+
+    未知标签 <pre> 按普通块渲染且 white-space 固定 normal：换行折叠、缩进塌缩
+    （真机截图确认整段代码连成一片）。Build 4170+ 支持 white-space: pre-wrap，
+    保留原生 <pre> 由 CSS 接管；旧构建（插件最低支持 4000）降级为每行一个官方
+    支持的 <div>（块级天然换行），空白转 &nbsp;，空行放 nbsp 占位保住行高。
+    长行在旧构建上不能按词换行（无 overflow/横向滚动），是可接受的降级。
+    """
+
+    if pre_wrap:
+        return html
+
+    def repl(m):
+        # CSS white-space 模型：块首/块尾紧贴闭合标签的单个换行被抑制，不产生空行。
+        # pygments 与 markdown-it 都输出 <pre><code>…\n</code></pre> 形态，
+        # 不剥掉会在末尾多出一个空行 div
+        inner = m.group(2)
+        if inner.startswith("\n"):
+            inner = inner[1:]
+        inner = re.sub(r"\n(</code>)?$", r"\1", inner)
+        parts = ['<div class="mip-pre">']
+        for line in inner.split("\n"):
+            content = _legacy_pre_line(line)
+            # 空行，或只剩闭合标签（源码块末尾空行 + </code>）：nbsp 占位保住行高
+            if not _INNER_TAG_RE.sub("", content).strip():
+                content += "&nbsp;"
+            parts.append("<div>%s</div>" % content)
+        parts.append("</div>")
+        return "".join(parts)
+
+    return _PRE_RE.sub(repl, html)
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +343,30 @@ def inline_local_images(html: str, base_dir: str = None) -> str:
 DEFAULT_STYLE = """
 <style>
   body { font-family: var(--font); font-size: 1rem; line-height: 1.6; color: var(--foreground); }
-  h1, h2, h3, h4, h5, h6 { color: var(--foreground); margin: 0.6em 0 0.3em; }
+  /* 排版向浏览器模式的 GitHub CSS 看齐（browser_server.py 的 GITHUB_CSS，数值一一对应），
+     但不能直接复用同一份：minihtml 是白名单引擎，不认 @media/:root/:nth-child/相邻/属性
+     选择器与 width/flex/overflow/600 字重；且表格/复选框/删除线已在 render.py 转成
+     minihtml 结构。这里只翻译受支持的字号/字重/行高/边框。
+     间距维度与浏览器不同：每个块挂在独立空占位行上（见 preview.py 的 "\n" 占位缓冲），
+     占位行自带约一行高（≈25px，已大于 GitHub 标题 24px/块 16px 的 margin）；minihtml 的
+     margin 又只接受正值、无法抵消占位行，故块 margin 一律 0，间距统一由占位行提供。 */
+  h1, h2, h3, h4, h5, h6 { color: var(--foreground); margin: 0; font-weight: bold; line-height: 1.25; }
+  h1 { font-size: 2em; }
+  h2 { font-size: 1.5em; }
+  h3 { font-size: 1.25em; }
+  h4 { font-size: 1em; }
+  h5 { font-size: 0.875em; }
+  h6 { font-size: 0.85em; }
+  /* 对应 GITHUB_CSS 的 h1/h2 border-bottom（border-soft 很淡）：用前景色低透明跟随配色 */
+  h1, h2 { border-bottom: 1px solid color(var(--foreground) alpha(0.18)); padding-bottom: 0.3em; }
   code { background-color: color(var(--background) alpha(0.5)); padding: 1px 4px; border-radius: 3px; }
-  pre { background-color: color(var(--background) alpha(0.5)); padding: 8px; border-radius: 4px; overflow: auto; }
+  /* <pre> 不在 minihtml 受支持标签白名单内（官方文档），未知标签默认 white-space:normal，
+     必须显式 pre-wrap 否则换行折叠、缩进塌缩；pre-wrap 需 Build 4170+，
+     旧构建由 convert_code_blocks 转成 .mip-pre（每行一 div）。overflow 不被支持，不写。 */
+  pre { background-color: color(var(--background) alpha(0.5)); padding: 8px; border-radius: 4px;
+        white-space: pre-wrap; font-family: Menlo, Consolas, DejaVu Sans Mono, monospace; }
+  .mip-pre { background-color: color(var(--background) alpha(0.5)); padding: 8px; border-radius: 4px;
+             font-family: Menlo, Consolas, DejaVu Sans Mono, monospace; }
   a { color: var(--accent); }
   blockquote { border-left: 3px solid var(--foreground); margin: 0; padding-left: 10px; opacity: 0.8; }
   hr { border: none; border-top: 1px solid var(--foreground); opacity: 0.3; }
@@ -411,12 +510,16 @@ def render_raw(text: str, settings: dict, engine) -> str:
     return fm_table + raw if fm_table else raw
 
 
-def render_html(text: str, settings: dict, engine, base_dir: str = None) -> str:
+def render_html(text: str, settings: dict, engine, base_dir: str = None,
+                pre_wrap: bool = True) -> str:
     """Markdown 文本 → 可在 phantom 中显示的 minihtml 字符串（整篇，未分片、未含样式）。
 
+    pre_wrap：宿主 Build 4170+ 时为 True，<pre> 保留原样由 CSS pre-wrap 接管；
+    旧构建传 False 走 div 降级（见 convert_code_blocks）。
     样式由调用方（preview.py）逐块前置 DEFAULT_STYLE。
     """
     norm = normalize_html(render_raw(text, settings, engine))
+    norm = convert_code_blocks(norm, pre_wrap)
     norm = convert_tables(norm)
     norm = convert_inputs(norm)
     norm = convert_strikethrough(norm)
