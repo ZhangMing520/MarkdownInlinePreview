@@ -1,5 +1,7 @@
 # MarkdownInlinePreview
 
+[English](README.en.md) | 简体中文
+
 在 **Sublime Text 编辑器内部（同窗口分栏）** 实时预览 Markdown，不依赖浏览器、不依赖其他 Sublime 包。
 
 渲染引擎可配置（默认 python-markdown，可选 markdown-it-py），独立发布到 Package Control。
