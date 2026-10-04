@@ -41,10 +41,14 @@ def read_source(view):
 
 
 def cursor_ratio(view):
-    """光标行 / 总行数（0~1），两种预览的近似比例定位共用。"""
+    """光标行 / 总行数（0~1），两种预览的近似比例定位共用。
+
+    View 没有 line_count()/rowcount()，行数用 rowcol(view.size()) 取最后一行行号 + 1 计算。
+    """
 
     row, _ = view.rowcol(view.sel()[0].begin())
-    return row / (view.line_count() or 1)
+    last_row, _ = view.rowcol(view.size())
+    return row / (last_row + 1)
 
 
 def schedule_debounced(holder, delay_ms, render):
@@ -105,6 +109,8 @@ class PreviewManager:
         self._anchors = {}
         # 防抖代际（schedule_debounced 用）
         self._gen = 0
+        # sync_scroll 挂在每次光标移动上，持续性失败只记一次完整 traceback
+        self._scroll_failed_logged = False
 
     # -- 生命周期 ----------------------------------------------------------
 
@@ -250,7 +256,7 @@ class PreviewManager:
                 try:
                     self.view.show(self.view.line(idx), True)
                 except Exception:
-                    pass
+                    logger.exception("锚点跳转定位失败: #%s", href[1:])
 
     def sync_scroll(self, source):
         # 块级近似对齐：源光标行按比例映射到预览对应块（非像素级）
@@ -261,7 +267,13 @@ class PreviewManager:
         try:
             self.view.show(self.view.line(target), True)
         except Exception:
-            pass
+            # 不能静默：sync_scroll 曾因 line_count 不存在静默坏掉数周（2026-10-04）。
+            # 本方法随每次光标移动触发：首次报完整 traceback，后续降为 debug。
+            if self._scroll_failed_logged:
+                logger.debug("同步滚动定位失败（target 块=%d）", target)
+            else:
+                self._scroll_failed_logged = True
+                logger.exception("同步滚动定位失败（target 块=%d）", target)
 
 
 class MipTogglePreviewCommand(sublime_plugin.WindowCommand):

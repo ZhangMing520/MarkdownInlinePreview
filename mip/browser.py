@@ -63,6 +63,8 @@ class BrowserManager:
         self.doc_id = "w%d" % window.id()
         # 防抖代际（preview.schedule_debounced 用）
         self._gen = 0
+        # sync_scroll 挂在每次光标移动上，持续性失败只记一次完整 traceback
+        self._scroll_failed_logged = False
 
     def is_source(self, view):
         return view is not None and self.source is not None and self.source.id() == view.id()
@@ -112,13 +114,22 @@ class BrowserManager:
         get_server().set_page(self.doc_id, body, extras=cfg.get("browser_extras", True))
 
     def sync_scroll(self, source):
-        """编辑器光标 → 浏览器按整页比例滚动（与 preview.py 同级的近似对齐）。"""
+        """编辑器光标 → 浏览器按整页比例滚动（与 preview.py 同级的近似对齐）。
+
+        listener 逐个调用各 manager 的 sync_scroll，这里抛异常会连带终止
+        后面的 manager，故自行吞掉（失败形态与 preview.py 一致：只报一次 traceback）。
+        """
 
         if self.source is None or not self.is_source(source) or not source.sel():
             return
-        if not mip_settings.get_settings().get("sync_scroll", True):
-            return
-        get_server().push_scroll(self.doc_id, preview_mod.cursor_ratio(source))
+        try:
+            get_server().push_scroll(self.doc_id, preview_mod.cursor_ratio(source))
+        except Exception:
+            if self._scroll_failed_logged:
+                logger.debug("浏览器同步滚动失败")
+            else:
+                self._scroll_failed_logged = True
+                logger.exception("浏览器同步滚动失败，后续降为 debug")
 
 
 class MipToggleBrowserPreviewCommand(sublime_plugin.WindowCommand):

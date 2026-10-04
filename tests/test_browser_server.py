@@ -127,6 +127,13 @@ def test_push_no_clients_ok(server):
     conn.close()
 
 
+def test_page_events_url_is_absolute():
+    # 回归：页面 URL 是 /{doc}（无尾斜杠），相对 "events" 会被解析成 /events 而 404，
+    # SSE 通道整个失效（实时刷新/滚动全断）。2026-10-04 真浏览器复现。
+    page = build_page("t", "<p>b</p>")
+    assert 'new EventSource(location.pathname' in page
+
+
 def test_build_page_structure():
     page = build_page("t", "<p>b</p>", ".codehilite .k { color: red; }")
     assert "<title>t</title>" in page

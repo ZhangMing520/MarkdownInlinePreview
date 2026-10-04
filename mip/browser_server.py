@@ -136,7 +136,9 @@ $extras_js
   function refresh() {
     if (typeof enhance === "function") { try { enhance(); } catch (e) {} }
   }
-  var es = new EventSource("events");
+  // EventSource 必须用绝对路径：页面 URL /{doc} 无尾斜杠，相对 "events" 会解析成根级 /events 而 404。
+  // 注意正则结尾的双美元号是 string.Template 的转义（单个会被当占位符报错）
+  var es = new EventSource(location.pathname.replace(/\\/+$$/, "") + "/events");
   es.onmessage = function (ev) {
     var msg = JSON.parse(ev.data);
     if (msg.h !== undefined) { el.innerHTML = msg.h; refresh(); }
@@ -405,6 +407,7 @@ class _SSEHandler(BaseHTTPRequestHandler):
             with open(full, "rb") as f:
                 body = f.read()
         except OSError:
+            logger.debug("静态资源读取失败: %s", full)
             self.send_error(404)
             return
         self.send_response(200)
@@ -449,7 +452,8 @@ class _SSEHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b"".join(frames))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass
+            # 页面刷新/关闭的常规断连，debug 级即可（正常操作每次刷新都会产生一条）
+            logger.debug("SSE 客户端断开: %s", doc_id)
         finally:
             with doc.lock:
                 doc.clients.discard(client)

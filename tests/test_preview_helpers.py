@@ -30,3 +30,33 @@ def test_is_preview_view_accepts_settings_or_view(sublime_shim):
     assert preview_mod.is_preview_view(_Settings(True)) is True           # 3.14 宿主形态
     assert preview_mod.is_preview_view(_View(_Settings(False))) is False
     assert preview_mod.is_preview_view(_Settings(False)) is False
+
+
+def test_cursor_ratio_uses_rowcol_only(sublime_shim):
+    # 钉住实现契约：只用 sel/rowcol/size（View 没有 line_count()/rowcount()），
+    # 光标位置与视图大小用两个可区分的假位置（0 值会碰撞，不能当哨兵用）。
+    import mip.preview as preview_mod
+    importlib.reload(preview_mod)
+
+    class _FakeView:
+        def __init__(self, cursor_row, last_row):
+            self._rows = {10: cursor_row, 200: last_row}
+
+        def sel(self):
+            class _R:
+                def begin(self):
+                    return 10
+            return [_R()]
+
+        def rowcol(self, tp):
+            return (self._rows[tp], 0)
+
+        def size(self):
+            return 200
+
+    view = _FakeView(cursor_row=0, last_row=9)
+    assert preview_mod.cursor_ratio(view) == 0.0   # 文档顶
+    view = _FakeView(cursor_row=5, last_row=9)
+    assert preview_mod.cursor_ratio(view) == 0.5   # 第 6 行 / 共 10 行
+    view = _FakeView(cursor_row=9, last_row=9)
+    assert preview_mod.cursor_ratio(view) == 0.9   # 文档底（末行无换行）

@@ -22,7 +22,8 @@ Published as a standalone Package Control package.
 - GFM rendering: tables (aligned monospace grid for narrow tables, cards for wide ones),
   code highlighting (pygments), task lists, strikethrough, front matter
 - In-document anchor links (`#heading` jumps to the matching block)
-- One-way scroll sync (editor → preview, block-level approximation)
+- One-way scroll sync (editor → preview, block-level approximation; **follows the cursor** —
+  clicks / arrow keys / typing trigger it; wheel scrolling exposes no event, so it does not follow)
 - Images embedded as base64 (local images instantly, remote ones asynchronously)
 - Clicking an external link in the preview opens it in your system browser
 - Path completion (triggered after `](` / `![`), paste-URL-as-link

@@ -18,11 +18,16 @@
 - **修复无语言标注代码块被染红**：codehilite 关闭 guess_lang——pygments 的语言猜测会把
   目录树等纯文本的制表线字符（├── │）判成 error token，在浏览器模式的完整 pygments 样式下
   显示为红色方块。无语言标注的围栏块现在按纯文本渲染（与 GitHub 行为一致）。
+- **修复浏览器模式 SSE 通道失效（含实时刷新与同步滚动）**：页面模板里 EventSource 用相对
+  路径 "events"，在无尾斜杠的 /{doc} 页面 URL 下被解析成根级 /events 而 404——真浏览器里
+  实时刷新和同步滚动从未生效过（pytest 直连绝对路径未暴露）。改为 location.pathname 拼接。
 - **围栏语言别名归一**：只映射捆绑 pygments 解析不到的语言名——jsonc→json、json5→json、
   yml→yaml（此前这些名字直接素色）。sh/zsh/golang/rs/c++/cs/docker/objc 等 pygments 原生
   别名不进表、不改写（原生已能高亮，强行映射反而会把 console/asm 的正确词法改坏）；
   所有围栏开行（含无语言的）都纳入跟踪，嵌套围栏里展示的代码字样不受影响。
   注意：markdown-it-py 引擎目前无高亮（pygments 只接在默认引擎上）。
+- **修复同步滚动从未生效**：cursor_ratio 调用了不存在的 View.line_count()（官方 API 无此
+  方法，任何宿主都会 AttributeError 且被静默吞掉），改用 rowcol(view.size()) 计算行数。
 - **修复 Python 3.14 宿主崩溃**：ST 4205+ 的 3.14 宿主向 ViewEventListener.is_applicable
   传 view.settings()（Settings 对象）而非 View，is_preview_view 改为双形态兼容
   （Build 4215 真机验证的崩溃点）。

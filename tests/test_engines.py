@@ -1,3 +1,5 @@
+import logging
+
 from conftest import SETTINGS
 from mip.engines import get_engine, available_engines
 from mip.engines.py_md import PythonMarkdownEngine
@@ -36,6 +38,19 @@ def test_get_engine_returns_instance():
     eng, msg = get_engine("python-markdown")
     assert eng is not None
     assert msg == ""
+
+
+def test_lazy_engine_import_failure_warns_once(monkeypatch, caplog):
+    # 防刷屏：get_engine 在每次防抖渲染都会走 _ensure_registered，
+    # 惰性引擎导入失败必须只告警一次（失败即从 _LAZY 消费掉名字）
+    import mip.engines as engines
+
+    monkeypatch.setattr(engines, "_LAZY", {"boom": (".nope_such_module", "Nope")})
+    for _ in range(3):
+        eng, msg = engines.get_engine("boom")
+        assert eng is None and msg
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warns) == 1
 
 
 def test_fence_lang_alias_highlight():

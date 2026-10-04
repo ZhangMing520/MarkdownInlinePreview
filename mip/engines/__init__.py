@@ -5,12 +5,13 @@ from .engine import Engine
 
 logger = logging.getLogger("MarkdownInlinePreview")
 
-# python-markdown 是默认引擎（由 PC 依赖频道提供）。库未安装时静默不注册，
+# python-markdown 是默认引擎（由 PC 依赖频道提供）。库未安装时不注册，
 # 包依然正常加载；get_engine 会返回 (None, 提示) 优雅降级，而不是让整个包崩溃。
 try:
     from .py_md import PythonMarkdownEngine
 except ImportError:
     PythonMarkdownEngine = None
+    logger.warning("MarkdownInlinePreview: python-markdown 导入失败，默认引擎不可用")
 
 _REGISTRY = {}
 if PythonMarkdownEngine is not None:
@@ -18,7 +19,8 @@ if PythonMarkdownEngine is not None:
 
 # markdown-it-py 为 vendor 进包的 v0.2 可选引擎。导入不放在包加载期：zip 安装形态下
 # import 会触发 vendor 解压（百个文件、1.7 MB），不该发生在 plugin_loaded 的 UI 线程上
-# ——首次 get_engine/available_engines 用到时才导入；vendor 缺失时静默不注册（行为同前）。
+# ——首次 get_engine/available_engines 用到时才导入。_LAZY 按消耗式处理：注册成功或
+# 导入失败都摘掉名字，失败只告警一次（get_engine 每次防抖渲染都会走到，per-call 会刷屏）。
 _LAZY = {"markdown-it-py": (".mdit", "MarkdownItEngine")}
 
 # 引擎实例按名字缓存：mdit 每次装配 parser+插件开销大，防抖渲染不该逐次重建
@@ -27,12 +29,16 @@ _INSTANCES = {}
 
 def _ensure_registered(name):
     cls = _REGISTRY.get(name)
-    if cls is not None or name not in _LAZY:
+    if cls is not None:
         return cls
-    mod_name, attr = _LAZY[name]
+    spec = _LAZY.pop(name, None)
+    if spec is None:
+        return None
+    mod_name, attr = spec
     try:
         module = importlib.import_module(mod_name, __package__)
     except ImportError:
+        logger.warning("MarkdownInlinePreview: 引擎 %s 的库缺失，不注册", name)
         return None
     cls = getattr(module, attr)
     _REGISTRY[name] = cls
@@ -71,6 +77,6 @@ def get_engine(name: str):
 
 
 def available_engines() -> list:
-    for name in _LAZY:
+    for name in list(_LAZY):  # _ensure_registered 会消费 _LAZY，快照后再迭代
         _ensure_registered(name)  # 可导入才列出，缺失形态不外显
     return list(_REGISTRY.keys())

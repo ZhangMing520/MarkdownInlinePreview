@@ -5,11 +5,14 @@
   无选中则插入 [URL](URL)。
 """
 
+import logging
 import os
 import sublime
 import sublime_plugin
 
 from .preview import is_preview_view
+
+logger = logging.getLogger("MarkdownInlinePreview")
 
 
 def _is_markdown(view):
@@ -39,6 +42,7 @@ class MipPathCompletion(sublime_plugin.EventListener):
         try:
             names = sorted(os.listdir(base))
         except OSError:
+            logger.debug("路径补全：目录不可读 %s", base)
             return None
         for name in names:
             if name.startswith("."):
