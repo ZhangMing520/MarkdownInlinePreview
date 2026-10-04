@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# ZCode 编辑器本地工作区配置（个人环境，不进仓库）
+.zcodeignore
