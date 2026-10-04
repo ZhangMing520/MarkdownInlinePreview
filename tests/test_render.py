@@ -150,6 +150,16 @@ def test_render_html_default_engine_gfm():
     assert "<input" not in out and "<del" not in out
 
 
+def test_render_body_no_guess_lang():
+    # 无语言标注的围栏块不做 pygments 语言猜测：
+    # 猜测会把目录树的制表线字符（├── │）判成 error token，在完整 pygments 样式下染红
+    from mip.render import render_body
+    md = "```text\ntext\n```\n\n```\n├── a\n│   └── b\n```\n"
+    body = render_body(md, SETTINGS, PythonMarkdownEngine(), base_dir=".")
+    assert 'class="err"' not in body
+    assert "├── a" in body
+
+
 def test_split_blocks_preserves_entities():
     # convert_charrefs=True 会把实体解码，重序列化必须重新 escape，
     # 否则代码块里的 &lt;b&gt; 会被还原成真标签

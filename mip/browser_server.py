@@ -26,58 +26,92 @@ logger = logging.getLogger("MarkdownInlinePreview")
 # 样式与页面模板（浏览器端零外部依赖：CSS 全内嵌，不引用任何 CDN）
 # ---------------------------------------------------------------------------
 
-# 紧凑版 GitHub 风格；亮/暗两套，跟随系统 prefers-color-scheme。
+# GitHub 风格样式表——每个值都有出处，两类来源：
+#   [实测] github.com 文件页（blob）article.markdown-body 的 computed style，
+#          2026-10-04 于 1440px 视口量得（列宽 1006px、行高 24px、段距 16px、h2 margin 24/16 等）
+#   [gmc]  github-markdown-css 5.8.1（GitHub 官方 markdown 样式的社区权威提取版，npmmirror 可查证）
+#   [增补] GitHub 未定义、为本地体验有意添加的规则（每处注明理由）
+# 亮暗色板均为 Primer 当前 token；跟随系统 prefers-color-scheme（与 github.com 行为一致）。
 # 代码高亮色由 pygments 的 get_style_defs 生成后经 $code_css 注入。
 GITHUB_CSS = """\
 :root {
+  /* [gmc light] fg #1f2328 / canvas #ffffff / border #d1d9e0 / canvas-subtle #f6f8fa
+     muted #59636e / accent #0969da；内联代码底 #818b981f（中性色 12% 透明）；
+     border-soft = 官方的 #d1d9e0b3（70% 透明，用于 h1-h2 下划线与表格行线） */
   --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0;
-  --code-bg: #f6f8fa; --quote-fg: #59636e; --link: #0969da;
+  --border-soft: #d1d9e0b3; --code-bg: #f6f8fa; --code-inline-bg: #818b981f;
+  --link: #0969da;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --border: #3d444d;
-    --code-bg: #151b23; --quote-fg: #9198a1; --link: #4493f8;
+    /* [gmc dark] canvas #0d1117 / fg #f0f6fc / border #3d444d / muted #9198a1
+       canvas-subtle #151b23 / accent #4493f8 */
+    --bg: #0d1117; --fg: #f0f6fc; --muted: #9198a1; --border: #3d444d;
+    --border-soft: #3d444db3; --code-bg: #151b23; --code-inline-bg: #6e768166;
+    --link: #4493f8;
   }
 }
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--fg);
+  /* [gmc] 官方正文栈；[增补] 显式插入 CJK 三平台字体（PingFang/雅黑）：GitHub 靠系统回退，
+     不写时 Linux/Windows 中文回退字体不可控（无中文 monospace 时会缺字形） */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial,
-    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  font-size: 16px; line-height: 1.6;
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  /* [实测] 16px / 1.5（行高实测 24px） */
+  font-size: 16px; line-height: 1.5;
 }
-#content { max-width: 980px; margin: 0 auto; padding: 32px 40px 96px; }
-h1, h2, h3, h4, h5, h6 { margin: 24px 0 12px; line-height: 1.25; font-weight: 600; }
-h1, h2 { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-p { margin: 0 0 14px; }
-a { color: var(--link); text-decoration: none; }
-a:hover { text-decoration: underline; }
+/* [实测] GitHub blob 页正文列宽 1006px（经典布局常量 1012px）；居中与 GitHub 页面布局一致，
+   实际原因是可读性：一行超过约 100 字符后回读易串行 */
+#content { max-width: 1012px; margin: 0 auto; padding: 32px; }
+/* [gmc] h1-h6: margin 1.5rem/1rem、行高 1.25、weight 600；h1 2em、h2 1.5em、h3 1.25em；
+   h1/h2 下划线 padding .3em + 1px border-soft（实测 7.2px = .3em × 24px 吻合） */
+h1, h2, h3, h4, h5, h6 { margin: 24px 0 16px; line-height: 1.25; font-weight: 600; }
+h1 { font-size: 2em; }
+h2 { font-size: 1.5em; }
+h3 { font-size: 1.25em; }
+h1, h2 { border-bottom: 1px solid var(--border-soft); padding-bottom: .3em; }
+/* [gmc] 统一块间距：段落/引用/列表/表格/代码块下边距 1rem（实测 16px），一处声明 */
+p, blockquote, ul, ol, table { margin: 0 0 16px; }
+/* [gmc] 链接默认带下划线 */
+a { color: var(--link); text-decoration: underline; }
 img { max-width: 100%; }
-hr { border: none; border-top: 3px solid var(--border); margin: 20px 0; }
+/* [gmc] hr: 高 .25em、bg border 色、margin 1.5rem */
+hr { border: none; height: .25em; background: var(--border); margin: 24px 0; }
 code, pre, kbd {
+  /* [gmc] 官方等宽栈（原样，勿加自选字体） */
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    "Liberation Mono", "DejaVu Sans Mono", monospace;
+    "Liberation Mono", monospace;
   font-size: 85%;
 }
-code { background: var(--code-bg); border-radius: 6px; padding: 0.2em 0.35em; }
-pre {
-  background: var(--code-bg); border-radius: 6px; padding: 14px 16px;
+/* [gmc] 内联代码：padding .2em .4em、85%、底 #818b981f、radius 6px */
+code { background: var(--code-inline-bg); border-radius: 6px; padding: .2em .4em; }
+/* [gmc] 代码块容器：canvas-subtle 底、radius 6px、padding 1rem、可横向滚动、行高 1.45 */
+pre, .codehilite {
+  background: var(--code-bg); border-radius: 6px; padding: 16px;
   overflow: auto; line-height: 1.45;
 }
 pre code { background: none; padding: 0; font-size: 100%; }
-.codehilite { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow: auto; }
 .codehilite pre { background: none; padding: 0; margin: 0; }
+/* [gmc] 引用：padding 0 1em、muted 色、左线 .25em border 色 */
 blockquote {
-  margin: 0 0 14px; padding: 0 14px; color: var(--quote-fg);
-  border-left: 4px solid var(--border);
+  padding: 0 1em; color: var(--muted);
+  border-left: .25em solid var(--border);
 }
-table { border-collapse: collapse; margin: 0 0 14px; display: block; overflow: auto; }
-th, td { border: 1px solid var(--border); padding: 6px 14px; }
-th { font-weight: 600; background: var(--code-bg); }
-tr:nth-child(2n) td { background: var(--code-bg); }
-ul, ol { margin: 0 0 14px; padding-left: 2em; }
-li { margin: 3px 0; }
+/* [gmc] 表格：th/td padding 6px 13px、1px border；行上边线 border-soft；
+   偶数行斑马纹 canvas-subtle（margin 归上方统一块间距规则） */
+table { border-collapse: collapse; display: block; overflow: auto; }
+th, td { border: 1px solid var(--border); padding: 6px 13px; }
+th { font-weight: 600; }
+tr { border-top: 1px solid var(--border-soft); }
+tr:nth-child(2n) { background: var(--code-bg); }
+/* [gmc] 列表 padding-left 2em；li 间距 .25em（实测约合 4px） */
+ul, ol { padding-left: 2em; }
+li + li { margin-top: .25em; }
+/* [增补] 任务列表复选框与文字的间距（GitHub 由 .task-list-item-controls 精细排版，这里取等效间距） */
 li input[type="checkbox"] { margin-right: 6px; }
+/* [增补] 删除线弱化处理：GitHub 渲染 del 为普通删除线；muted 提高视觉区分度（可辨识但不抢眼） */
 del, s { color: var(--muted); }
 """
 

@@ -1,6 +1,8 @@
 import os
 import sys
 
+import pytest
+
 # 让 tests/ 下能直接 import 仓库根的 mip 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -12,3 +14,13 @@ EXTENSIONS = [
     "toc", "pymdownx.tasklist", "pymdownx.tilde",
 ]
 SETTINGS = {"extensions": EXTENSIONS}
+
+
+@pytest.fixture
+def sublime_shim(monkeypatch):
+    """把 mock 的 sublime/sublime_plugin 注入 sys.modules，供依赖宿主 API 的模块单测复用。"""
+    from tests.mocks import sublime_mock
+
+    monkeypatch.setitem(sys.modules, "sublime", sublime_mock.sublime)
+    monkeypatch.setitem(sys.modules, "sublime_plugin", sublime_mock.sublime_plugin)
+    return sublime_mock

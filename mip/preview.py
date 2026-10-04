@@ -22,9 +22,14 @@ PREVIEW_SETTINGS_KEY = "mip_preview"
 
 
 def is_preview_view(view):
-    """是否 mip 打开的预览视图。内部 tag 的编码只在这一处，其他模块用它判断。"""
+    """是否 mip 打开的预览视图。内部 tag 的编码只在这一处，其他模块用它判断。
 
-    return bool(view.settings().get(PREVIEW_SETTINGS_KEY, False))
+    宿主兼容：ST 4205+（Python 3.14 宿主）的 ViewEventListener.is_applicable 传入的是
+    view.settings() 而非 View。View 有 .settings()、Settings 没有，按此取设置。
+    """
+
+    settings = view.settings() if hasattr(view, "settings") else view
+    return bool(settings.get(PREVIEW_SETTINGS_KEY, False))
 
 
 def read_source(view):
@@ -57,6 +62,7 @@ def schedule_debounced(holder, delay_ms, render):
             render()
 
     sublime.set_timeout(_go, delay_ms)
+
 
 # 块 HTML 里的元素 id（toc/anchors 扩展生成），供 #锚点 链接跳转定位块
 _ID_RE = re.compile(r"""\bid=["']([^"']+)["']""")

@@ -112,6 +112,9 @@ MarkdownInlinePreview/
 - 长文档分块：预览视图为**空白专用视图**，按 Markdown 顶层块逐段插入多个 phantom（每段一个，
   host 缓冲每行挂一个），整篇随视图自然滚动；规避单个 phantom 的尺寸上限（单 LAYOUT_BLOCK 放不下长文）。
 - 外部 CSS / `<script>` 全部剥离；样式收敛为内联 style，预置一份接近 GitHub 观感的紧凑样式。
+- 版式设计有据可查：浏览器模式的完整版式逐值对齐 GitHub——实测 github.com blob 页正文列
+  （1006px/行高 1.5/段距 16px/h 系列 margin 24-16），并对照 github-markdown-css 5.8.1 权威值；
+  关键版式规则注释标注出处（[实测]/[gmc]/[增补]），禁止凭感觉设值。
 - 代码块：codehilite 输出 `<span class=...>`，在 phantom `<body>` 内嵌一段 `<style>` 把 pygments
   类名（`.c1`/`.k`/`.s` …）映射到固定色；结合 `<html>` 自动加的 `dark`/`light` 类适配明暗主题。
   不跟随编辑器主题（TextMate 高亮无法复用，架构限制）。无需逐 token 转 inline。

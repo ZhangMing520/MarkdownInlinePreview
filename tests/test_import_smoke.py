@@ -2,13 +2,10 @@
 验证 ST 依赖模块能正常 import（捕获语法/引用错误）。行为需在真实 Sublime 验证。
 """
 
+import importlib
 
-def test_import_st_modules(monkeypatch):
-    from tests.mocks import sublime_mock
-    monkeypatch.setitem(__import__("sys").modules, "sublime", sublime_mock.sublime)
-    monkeypatch.setitem(__import__("sys").modules, "sublime_plugin", sublime_mock.sublime_plugin)
 
-    import importlib
+def test_import_st_modules(sublime_shim):
     import mip.preview as preview_mod
     import mip.listener as listener_mod
     import mip.settings as settings_mod

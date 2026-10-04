@@ -11,6 +11,21 @@
 - **默认引擎补齐 GFM**：vendored pymdownx 子集（tasklist/tilde），python-markdown 引擎也能渲染任务列表与删除线。
 - **zip 安装兼容**：Package Control 发布形态（.sublime-package）下 vendored 库自动解压到缓存目录，
   修复 mdit 引擎与公式/图资产在 zip 安装下不可用的问题。
+- **浏览器模式版式逐值对齐 GitHub**：实测 github.com 文件页（blob）正文列 1006px/行高 1.5/
+  段距 16px/h 系列 margin 24-16 等，并对照 github-markdown-css 5.8.1（列宽 1012px、内联代码
+  底 #818b981f、表格 6px 13px、引用 0 1em、hr .25em、暗色板 #f0f6fc/#3d444d/#151b23 等）；
+  关键版式规则在源码注释标注出处（[实测]/[gmc]/[增补]）。
+- **修复无语言标注代码块被染红**：codehilite 关闭 guess_lang——pygments 的语言猜测会把
+  目录树等纯文本的制表线字符（├── │）判成 error token，在浏览器模式的完整 pygments 样式下
+  显示为红色方块。无语言标注的围栏块现在按纯文本渲染（与 GitHub 行为一致）。
+- **围栏语言别名归一**：只映射捆绑 pygments 解析不到的语言名——jsonc→json、json5→json、
+  yml→yaml（此前这些名字直接素色）。sh/zsh/golang/rs/c++/cs/docker/objc 等 pygments 原生
+  别名不进表、不改写（原生已能高亮，强行映射反而会把 console/asm 的正确词法改坏）；
+  所有围栏开行（含无语言的）都纳入跟踪，嵌套围栏里展示的代码字样不受影响。
+  注意：markdown-it-py 引擎目前无高亮（pygments 只接在默认引擎上）。
+- **修复 Python 3.14 宿主崩溃**：ST 4205+ 的 3.14 宿主向 ViewEventListener.is_applicable
+  传 view.settings()（Settings 对象）而非 View，is_preview_view 改为双形态兼容
+  （Build 4215 真机验证的崩溃点）。
 - **修复 markdown-it-py 引擎不可用**：vendored 副本从 4.2.0 降到 2.2.0（4.x 用了 3.9+ 运行时语法，
   ST 3.8 宿主 import 失败被静默吞掉）；表格/删除线改由 `default` preset 提供。
 - `.python-version = 3.8` 兼容全部 ST4：旧构建跑 3.8 宿主，Build 4205+ 官方别名自动选 3.14 宿主。
