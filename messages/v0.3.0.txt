@@ -1,0 +1,7 @@
+MarkdownInlinePreview v0.3.0
+
+- 路径补全：输入 ]( 或 ![ 后列出同目录文件/子目录
+- 粘贴 URL 自动链接命令：mip_paste_url_as_link
+- README（含与 VS Code 预览能力对照表）、LICENSE、发布件就绪
+
+如从旧版升级遇到问题，重载插件或重启 Sublime 即可。

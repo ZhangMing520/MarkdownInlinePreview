@@ -1,0 +1,7 @@
+MarkdownInlinePreview v0.2.0
+
+- 备选引擎 markdown-it-py（已 vendor 进包）：CommonMark 更精准，开箱补齐 GFM 表格/任务列表/删除线
+  设置 "engine": "markdown-it-py" 切换
+- YAML front matter 渲染为表格
+- 引擎库缺失时自动降级并状态栏提示
+- 单向同步滚动（编辑器→预览，块级近似）

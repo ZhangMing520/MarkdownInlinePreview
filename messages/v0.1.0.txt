@@ -1,0 +1,8 @@
+MarkdownInlinePreview v0.1.0
+
+首个可用版本：同窗口分栏、编辑器内 phantom 实时预览 Markdown。
+- python-markdown 引擎 + pygments 代码高亮
+- 防抖刷新、图片 base64 内嵌、关闭还原布局
+- minihtml 标签转换层（表格→div 网格、任务列表→[x]、删除线→line-through）
+
+按 ctrl+alt+m（macOS super+ctrl+m）开启预览。

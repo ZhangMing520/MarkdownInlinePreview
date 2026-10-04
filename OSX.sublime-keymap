@@ -1,0 +1,3 @@
+[
+    { "keys": ["super+ctrl+m"], "command": "mip_toggle_preview" }
+]

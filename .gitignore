@@ -1,0 +1,5 @@
+# 开发虚拟环境 / 缓存（不进仓库）
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
