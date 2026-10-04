@@ -124,16 +124,33 @@ def test_convert_code_blocks_legacy():
     # <pre> 闭标签前的单个换行（markdown-it 输出形态）按 HTML 规范忽略，不产生空行 div
     out4 = convert_code_blocks("<pre>a\n</pre>", False)
     assert out4.count("<div>") == 1 and "<div>&nbsp;</div>" not in out4
-    # pygments/mdit 实际形态：换行在 </code> 前
+    # 引擎在 <pre> 内套 <code>：换行在 </code> 前，且包裹标签整体剥离，
+    # 绝不允许 <code> 落首行 div、</code> 落末行 div（跨块劈裂 → minihtml 结构畸形）
     out5 = convert_code_blocks("<pre><code>a\n</code></pre>", False)
+    assert "<code" not in out5 and "</code>" not in out5
     inner5 = re.findall(r"<div>.*?</div>", out5)
-    assert len(inner5) == 1 and "a</code>" in inner5[0]
+    assert inner5 == ["<div>a</div>"]
+    # 多行含 <code>：每行一个平衡 div，首行缩进也要转 nbsp（曾漏：首行紧跟 <code> 开头）
+    out6 = convert_code_blocks("<pre><code>    x\n    y</code></pre>", False)
+    assert "<code" not in out6 and "</code>" not in out6
+    assert re.findall(r"<div>.*?</div>", out6) == [
+        "<div>&nbsp;&nbsp;&nbsp;&nbsp;x</div>",
+        "<div>&nbsp;&nbsp;&nbsp;&nbsp;y</div>",
+    ]
+    # codehilite 形态：<span></span> 行号占位 + <code> 一起剥，内部 span 保留
+    out7 = convert_code_blocks(
+        '<pre><span></span><code><span class="k">def</span> f():</code></pre>', False
+    )
+    assert "<code" not in out7 and "<span></span>" not in out7
+    assert '<span class="k">def</span>' in out7
 
 
 def test_render_html_code_block_legacy_end_to_end():
     md = "```python\ndef f():\n    return 1\n```"
     out = render_html(md, SETTINGS, PythonMarkdownEngine(), pre_wrap=False)
     assert "<pre" not in out and "mip-pre" in out
+    # codehilite 的 <code> 包裹在 legacy 路径必须整体剥离，不能跨 per-line div 劈裂
+    assert "<code" not in out and "</code>" not in out
 
 
 def test_convert_strikethrough():
@@ -149,6 +166,9 @@ def test_convert_strikethrough():
     assert convert_strikethrough("<del>&amp;x</del>") == "&amp;\u0336x\u0336"
     # <s> 同义标签同样处理
     assert convert_strikethrough("<s>y</s>") == "y\u0336"
+    # 不构成合法标签的孤立 < 必须保留（旧 [^\s<] 兜底会 findall 整字符丢弃 → 少一字），
+    # 且不给它叠标记（< 无字形，叠 U+0336 反而异常）；其后的正常字符照常叠加
+    assert convert_strikethrough("<del>a<b</del>") == "a\u0336<b\u0336"
 
 
 def test_inline_local_images():

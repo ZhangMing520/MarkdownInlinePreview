@@ -43,12 +43,19 @@ _PRE_RE = re.compile(r"(<pre[^>]*>)(.*?)(</pre>)", re.S | re.I)
 # 标签之间的纯空白文本（pygments 把缩进/对齐空白编码为 <span class="w">  </span>）
 _PRE_WS_BETWEEN_TAGS_RE = re.compile(r"(>)([ \t]+)(?=<)")
 _PRE_LEADING_WS_RE = re.compile(r"^[ \t]+")
+# <pre> 内的 <code> 包裹（codehilite 还在其前面放一个空 <span></span> 行号占位）：
+# legacy 逐行拆 <div> 前整体剥离，否则 <code>/</code> 会跨首末行劈裂、中间行丢 code 上下文
+_PRE_CODE_WRAP_RE = re.compile(r"^(?:<span></span>)?<code[^>]*>|</code>$", re.I)
+# CSS white-space 模型：<pre> 首尾紧贴的单个换行被抑制，不产生空行 div
+_PRE_BOUNDARY_NL_RE = re.compile(r"^\n|\n$")
 # U+0336 COMBINING LONG STROKE OVERLAY：minihtml 官方仅支持 text-decoration
 # none/underline，line-through 被静默丢弃，删除线只能逐字叠加组合字符实现
 _STRIKE_MARK = "\u0336"
 # del/s 内层切词：标签 | 数字/十六进制/命名实体 | 连续空白 | 其余单字符
+# 兜底用 [^\s]（含 <）而非 [^\s<]：不构成合法标签的孤立 < 若被排除，findall 会整字符
+# 丢弃（删除线文本少一个字）；保留后 tok[0]=="<" 分支不给它叠标记，仅原样透传。
 _STRIKE_TOKEN_RE = re.compile(
-    r"<[^>]+>|&#\d+;|&#x[0-9a-fA-F]+;|&[a-zA-Z][a-zA-Z0-9]+;|\s+|[^\s<]"
+    r"<[^>]+>|&#\d+;|&#x[0-9a-fA-F]+;|&[a-zA-Z][a-zA-Z0-9]+;|\s+|[^\s]"
 )
 # 宽度不可测的单元格内容：img 按自身尺寸渲染（alt 不计宽），块级标签自带换行，
 # 两者都会破坏 nbsp 补齐的列对齐 → 整表放弃网格
@@ -249,17 +256,15 @@ def convert_code_blocks(html: str, pre_wrap: bool = True) -> str:
         return html
 
     def repl(m):
-        # CSS white-space 模型：块首/块尾紧贴闭合标签的单个换行被抑制，不产生空行。
-        # pygments 与 markdown-it 都输出 <pre><code>…\n</code></pre> 形态，
-        # 不剥掉会在末尾多出一个空行 div
-        inner = m.group(2)
-        if inner.startswith("\n"):
-            inner = inner[1:]
-        inner = re.sub(r"\n(</code>)?$", r"\1", inner)
+        # 整体剥离 <code> 包裹（见 _PRE_CODE_WRAP_RE），再按 CSS white-space 模型抑制
+        # 首尾紧贴换行——剥 <code> 后残留的 <code>\n 也算首换行。.mip-pre 的 CSS 已接管
+        # 代码块外观，去掉 <code> 也免与内联 code 规则叠出双重背景。
+        inner = _PRE_CODE_WRAP_RE.sub("", m.group(2))
+        inner = _PRE_BOUNDARY_NL_RE.sub("", inner)
         parts = ['<div class="mip-pre">']
         for line in inner.split("\n"):
             content = _legacy_pre_line(line)
-            # 空行，或只剩闭合标签（源码块末尾空行 + </code>）：nbsp 占位保住行高
+            # 空行：nbsp 占位保住行高
             if not _INNER_TAG_RE.sub("", content).strip():
                 content += "&nbsp;"
             parts.append("<div>%s</div>" % content)
